@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv
+
+# Secrets and Environment
+.env
+.env.*
+!.env.example
+credentials.json
+token.pickle
+*.pem
+*.key
+
+# GCP
+service-account-key.json
+gcp-key.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+
+# Logs
+logs/
+*.log
+screenshots/
+/tmp/
+
+# Playwright
+playwright/.cache/
+test-results/
+playwright-report/
+
+# Docker
+.dockerignore
+
+# Project specific
+.env.local
+.env.production
