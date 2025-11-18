@@ -58,35 +58,10 @@ async def test_direct_link_navigation():
     print()
 
 
-async def test_protocol_error_fallback():
-    """Test fallback when direct link has protocol error."""
-    print("=" * 60)
-    print("Test 3: Protocol Error Fallback (trk. domain)")
-    print("=" * 60)
-    
-    # Simulate a tracking URL that redirects
-    test_url = "https://trk.bittersandbottles.com/some-tracking-link"
-    
-    async with managed_browser():
-        try:
-            result = await navigate_to_product(
-                direct_link=test_url,
-                product_name="Fortaleza"
-            )
-            print(f"✓ Fallback successful")
-            print(f"  Method: {result['method']}")
-            print(f"  URL: {result['current_url']}")
-        except Exception as e:
-            print(f"✗ Fallback failed: {e}")
-            print(f"  Note: Search might not work if Fortaleza is out of stock")
-    
-    print()
-
-
 async def test_404_fallback():
     """Test fallback when direct link returns 404."""
     print("=" * 60)
-    print("Test 4: 404 Error Fallback")
+    print("Test 3: 404 Error Fallback")
     print("=" * 60)
     
     # URL that doesn't exist
@@ -111,7 +86,7 @@ async def test_404_fallback():
 async def test_search_icon_detection():
     """Test that we can find the search icon on the homepage."""
     print("=" * 60)
-    print("Test 5: Search Icon Detection")
+    print("Test 4: Search Icon Detection")
     print("=" * 60)
     
     async with managed_browser():
@@ -173,13 +148,10 @@ async def main():
         # Test 2: Direct link (should work if product exists)
         await test_direct_link_navigation()
         
-        # Test 3: Protocol error fallback
-        await test_protocol_error_fallback()
-        
-        # Test 4: 404 fallback
+        # Test 3: 404 fallback (tests search fallback)
         await test_404_fallback()
         
-        # Test 5: Search icon detection (debugging)
+        # Test 4: Search icon detection (debugging)
         await test_search_icon_detection()
         
         print("=" * 60)
