@@ -71,11 +71,18 @@ async def verify_age(page: Page) -> dict:
                     logger.info("Found age confirmation button", selector=selector)
                     await simple_button.click()
                     logger.info("Clicked age confirmation button")
+                    
+                    # Wait for modal to disappear - increase timeout and fail if it doesn't
                     try:
-                        await page.wait_for_selector(overlay_selectors[0], state="hidden", timeout=5000)
+                        await page.wait_for_selector(overlay_selectors[0], state="hidden", timeout=10000)
                         logger.info("Age verification modal closed")
                     except PlaywrightTimeout:
-                        logger.warning("Modal did not disappear, but continuing anyway")
+                        logger.error("Age verification modal did not close after clicking button")
+                        return {
+                            "status": "error",
+                            "message": "Modal did not close after submission - may need manual intervention"
+                        }
+                    
                     return {"status": "success", "message": "Age verification completed (button)"}
             except PlaywrightTimeout:
                 continue
@@ -150,12 +157,16 @@ async def verify_age(page: Page) -> dict:
         await submit_button.click()
         logger.info("Submitted age verification")
         
-        # Wait for modal to disappear
+        # Wait for modal to disappear - increase timeout and fail if it doesn't
         try:
-            await page.wait_for_selector(overlay_selectors[0], state="hidden", timeout=5000)
+            await page.wait_for_selector(overlay_selectors[0], state="hidden", timeout=10000)
             logger.info("Age verification modal closed")
         except PlaywrightTimeout:
-            logger.warning("Modal did not disappear, but continuing anyway")
+            logger.error("Age verification modal did not close after date submission")
+            return {
+                "status": "error",
+                "message": "Modal did not close after date submission - may need manual intervention"
+            }
         
         return {
             "status": "success",

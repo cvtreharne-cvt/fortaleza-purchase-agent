@@ -35,7 +35,7 @@ async def navigate_to_product(
     browser = get_browser_manager()
     page = await browser.new_page()
     
-    # Try direct link first
+    # Ensure page is closed even if errors occur
     try:
         logger.info("Navigating to direct link", url=direct_link)
         
@@ -84,6 +84,9 @@ async def navigate_to_product(
                 f"Both direct link and search failed. "
                 f"Direct: {str(e)}, Search: {str(search_error)}"
             )
+    finally:
+        # Always close the page to prevent resource leaks
+        await page.close()
 
 
 async def _verify_product_page(page: Page) -> bool:
@@ -98,15 +101,19 @@ async def _verify_product_page(page: Page) -> bool:
     """
     try:
         # Check for product page indicators
-        # - Product title
-        # - Add to cart button OR Sold Out/Notify button
-        # - Price
-        await page.wait_for_selector(
+        # Must have: Product title
+        # Must have at least one: Add to cart button, Notify button, Sold Out text, or Price
+        
+        # First verify title exists
+        title = await page.wait_for_selector(
             "h1.product-title, .product__title, [data-product-title]",
             timeout=5000
         )
         
-        # Accept either Add to Cart or out-of-stock indicators
+        if not title:
+            return False
+        
+        # Check for at least one product indicator
         add_to_cart = await page.query_selector(
             "button[name='add'], .product-form__submit, [data-add-to-cart]"
         )
@@ -114,8 +121,10 @@ async def _verify_product_page(page: Page) -> bool:
         sold_out = await page.query_selector("text=/sold out/i")
         price = await page.query_selector(".price, .product-price, [data-product-price]")
         
-        # Consider it a product page if title exists and either add_to_cart OR sold_out/notify exists
-        return (add_to_cart is not None) or (notify_me is not None) or (sold_out is not None) or (price is not None)
+        # Require title AND at least one other indicator
+        has_indicator = (add_to_cart is not None) or (notify_me is not None) or (sold_out is not None) or (price is not None)
+        
+        return has_indicator
         
     except PlaywrightTimeout:
         return False
