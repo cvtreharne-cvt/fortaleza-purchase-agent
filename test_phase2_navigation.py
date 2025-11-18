@@ -161,7 +161,7 @@ async def main():
         print("- Fortaleza is out of stock")
         print("- Website structure has changed")
         print("- Network issues")
-        print("\nCheck the logs above for details.")
+        print("\nScroll up to review test results and any errors.")
         
     except Exception as e:
         print(f"\n❌ Test suite failed: {e}")
