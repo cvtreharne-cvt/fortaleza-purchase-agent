@@ -20,22 +20,22 @@ async def navigate_to_product(
 ) -> dict:
     """
     Navigate to product page using direct link with search fallback.
-    
+
     Args:
         direct_link: Direct URL to product page from email
         product_name: Product name for search fallback
-        
+
     Returns:
-        dict with status and current_url
-        
+        dict with status, current_url, and page object.
+        Caller is responsible for closing the page when done.
+
     Raises:
         NavigationError: If navigation fails completely
     """
     settings = get_settings()
     browser = get_browser_manager()
     page = await browser.new_page()
-    
-    # Ensure page is closed even if errors occur
+
     try:
         logger.info("Navigating to direct link", url=direct_link)
         
@@ -61,16 +61,17 @@ async def navigate_to_product(
         return {
             "status": "success",
             "method": "direct_link",
-            "current_url": page.url
+            "current_url": page.url,
+            "page": page
         }
-        
+
     except (ProtocolError, PageNotFoundError, UnexpectedPageError, PlaywrightTimeout) as e:
         logger.warning(
             "Direct link failed, trying search fallback",
             error=str(e),
             product_name=product_name or settings.product_name
         )
-        
+
         # Fallback to homepage + search
         try:
             search_result = await _search_for_product(
@@ -80,52 +81,47 @@ async def navigate_to_product(
             return search_result
         except Exception as search_error:
             logger.error("Search fallback also failed", error=str(search_error))
+            # Close page on complete failure
+            await page.close()
             raise NavigationError(
                 f"Both direct link and search failed. "
                 f"Direct: {str(e)}, Search: {str(search_error)}"
             )
-    finally:
-        # Always close the page to prevent resource leaks
-        await page.close()
 
 
 async def _verify_product_page(page: Page) -> bool:
     """
     Verify that we're on a product page.
-    
+
     Args:
         page: Playwright page
-        
+
     Returns:
         True if on product page, False otherwise
     """
     try:
         # Check for product page indicators
         # Must have: Product title
-        # Must have at least one: Add to cart button, Notify button, Sold Out text, or Price
-        
+        # Must have at least one: Add to cart button, Notify button, or Sold Out text
+
         # First verify title exists
-        title = await page.wait_for_selector(
+        await page.wait_for_selector(
             "h1.product-title, .product__title, [data-product-title]",
             timeout=5000
         )
-        
-        if not title:
-            return False
-        
-        # Check for at least one product indicator
+
+        # Check for product action indicators (not just price)
         add_to_cart = await page.query_selector(
             "button[name='add'], .product-form__submit, [data-add-to-cart]"
         )
         notify_me = await page.query_selector("text=/notify me when available/i")
         sold_out = await page.query_selector("text=/sold out/i")
-        price = await page.query_selector(".price, .product-price, [data-product-price]")
-        
-        # Require title AND at least one other indicator
-        has_indicator = (add_to_cart is not None) or (notify_me is not None) or (sold_out is not None) or (price is not None)
-        
-        return has_indicator
-        
+
+        # Require title AND at least one product action indicator
+        has_action_indicator = (add_to_cart is not None) or (notify_me is not None) or (sold_out is not None)
+
+        return has_action_indicator
+
     except PlaywrightTimeout:
         return False
 
@@ -236,7 +232,8 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
         return {
             "status": "success",
             "method": "search",
-            "current_url": page.url
+            "current_url": page.url,
+            "page": page
         }
         
     except PlaywrightTimeout as e:

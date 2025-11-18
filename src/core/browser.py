@@ -1,5 +1,6 @@
 """Playwright browser harness for managing browser lifecycle."""
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -13,49 +14,51 @@ logger = get_logger(__name__)
 
 class BrowserManager:
     """Manages Playwright browser lifecycle."""
-    
+
     def __init__(self):
         """Initialize browser manager."""
         self.settings = get_settings()
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
+        self._start_lock = asyncio.Lock()
         
     async def start(self) -> None:
         """Start Playwright and launch browser."""
-        if self.browser:
-            logger.warning("Browser already started")
-            return
-        
-        logger.info("Starting Playwright browser", headless=self.settings.headless)
-        
-        # Start Playwright
-        self.playwright = await async_playwright().start()
-        
-        # Launch Chromium
-        self.browser = await self.playwright.chromium.launch(
-            headless=self.settings.headless,
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--disable-blink-features=AutomationControlled',
-            ]
-        )
-        
-        # Create context with reasonable viewport and user agent
-        self.context = await self.browser.new_context(
-            viewport={'width': 1280, 'height': 720},
-            user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            java_script_enabled=True,
-            accept_downloads=False,
-        )
-        
-        # Set default timeouts
-        self.context.set_default_timeout(self.settings.browser_timeout)
-        self.context.set_default_navigation_timeout(self.settings.navigation_timeout)
-        
-        logger.info("Browser started successfully")
+        async with self._start_lock:
+            if self.browser:
+                logger.warning("Browser already started")
+                return
+
+            logger.info("Starting Playwright browser", headless=self.settings.headless)
+
+            # Start Playwright
+            self.playwright = await async_playwright().start()
+
+            # Launch Chromium
+            self.browser = await self.playwright.chromium.launch(
+                headless=self.settings.headless,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--disable-blink-features=AutomationControlled',
+                ]
+            )
+
+            # Create context with reasonable viewport and user agent
+            self.context = await self.browser.new_context(
+                viewport={'width': 1280, 'height': 720},
+                user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                java_script_enabled=True,
+                accept_downloads=False,
+            )
+
+            # Set default timeouts
+            self.context.set_default_timeout(self.settings.browser_timeout)
+            self.context.set_default_navigation_timeout(self.settings.navigation_timeout)
+
+            logger.info("Browser started successfully")
     
     async def stop(self) -> None:
         """Stop browser and cleanup resources."""

@@ -33,17 +33,19 @@ async def verify_age(page: Page) -> dict:
             "[data-age-verification]",
             ".modal-age-verification",
         ]
-        
+
         overlay = None
+        matched_selector = None
         for selector in overlay_selectors:
             try:
                 overlay = await page.wait_for_selector(selector, timeout=2000)
                 if overlay:
+                    matched_selector = selector
                     logger.info("Age verification overlay found", selector=selector)
                     break
             except PlaywrightTimeout:
                 continue
-        
+
         if not overlay:
             logger.info("No age verification modal found")
             return {"status": "not_found", "message": "No age verification required"}
@@ -71,10 +73,10 @@ async def verify_age(page: Page) -> dict:
                     logger.info("Found age confirmation button", selector=selector)
                     await simple_button.click()
                     logger.info("Clicked age confirmation button")
-                    
-                    # Wait for modal to disappear - increase timeout and fail if it doesn't
+
+                    # Wait for modal to disappear - use the selector that matched
                     try:
-                        await page.wait_for_selector(overlay_selectors[0], state="hidden", timeout=10000)
+                        await page.wait_for_selector(matched_selector, state="hidden", timeout=10000)
                         logger.info("Age verification modal closed")
                     except PlaywrightTimeout:
                         logger.error("Age verification modal did not close after clicking button")
@@ -82,7 +84,7 @@ async def verify_age(page: Page) -> dict:
                             "status": "error",
                             "message": "Modal did not close after submission - may need manual intervention"
                         }
-                    
+
                     return {"status": "success", "message": "Age verification completed (button)"}
             except PlaywrightTimeout:
                 continue
@@ -156,10 +158,10 @@ async def verify_age(page: Page) -> dict:
         # Click submit
         await submit_button.click()
         logger.info("Submitted age verification")
-        
-        # Wait for modal to disappear - increase timeout and fail if it doesn't
+
+        # Wait for modal to disappear - use the selector that matched
         try:
-            await page.wait_for_selector(overlay_selectors[0], state="hidden", timeout=10000)
+            await page.wait_for_selector(matched_selector, state="hidden", timeout=10000)
             logger.info("Age verification modal closed")
         except PlaywrightTimeout:
             logger.error("Age verification modal did not close after date submission")
