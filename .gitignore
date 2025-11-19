@@ -74,3 +74,5 @@ playwright-report/
 # Project specific
 .env.local
 .env.production
+
+tags
