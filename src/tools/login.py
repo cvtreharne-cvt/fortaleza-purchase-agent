@@ -140,31 +140,31 @@ async def login_to_account(page: Page) -> dict:
         
         logger.info("Submitting login form")
         await submit_button.click()
-        
-        # Wait for navigation or error
+
+        # Wait for navigation to complete
+        # Note: B&B website takes ~14s to process login server-side
         await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(3000)  # Give page time to process (especially in headless)
-        
+
         # Check for 2FA
         if await _check_for_2fa(page):
             logger.warning("2FA required - human intervention needed")
             raise TwoFactorRequired("Two-factor authentication required - manual intervention needed")
-        
+
         # Check for login errors
         error = await _check_for_login_error(page)
         if error:
             raise Exception(f"Login failed: {error}")
-        
+
         # Verify login was successful by checking URL
         # The logout link is hidden in hamburger menu, so URL is more reliable
         if "/account" in page.url.lower():
             logger.info("Login successful", current_url=page.url)
             return {"status": "success", "message": "Login successful"}
-        
+
         # Fallback: still on login page means login failed
         if "/login" in page.url.lower():
             raise Exception("Login failed - still on login page")
-        
+
         # If we're somewhere else, assume success
         logger.info("Login appears successful", current_url=page.url)
         return {"status": "success", "message": "Login successful"}

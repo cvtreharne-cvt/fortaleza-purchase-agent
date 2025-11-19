@@ -77,10 +77,7 @@ async def add_to_cart(page: Page, proceed_to_checkout: bool = False) -> dict:
             logger.info("Cart drawer appeared with success message")
         except PlaywrightTimeout:
             logger.warning("Cart drawer success message not found, but continuing")
-        
-        # Additional wait for drawer animation
-        await page.wait_for_timeout(1000)
-        
+
         # Verify item was added by checking for cart indicators
         item_added = await _verify_item_added(page)
         

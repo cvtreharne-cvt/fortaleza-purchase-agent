@@ -49,19 +49,18 @@ async def checkout_and_pay(page: Page, submit_order: bool = None) -> dict:
         
         # Wait for page to fully load
         await page.wait_for_load_state("domcontentloaded")
-        await page.wait_for_timeout(2000)
-        
+
         # Verify pick-up is selected (should be default)
         await _verify_pickup_selected(page)
         
-        # Select pickup location
-        await _select_pickup_location(page)
+        # Detect pickup location (returns location string or None)
+        pickup_location = await _select_pickup_location(page)
         
         # Fill in payment information
         await _fill_payment_info(page)
         
         # Get order summary before submitting
-        order_summary = await _get_order_summary(page)
+        order_summary = await _get_order_summary(page, pickup_location=pickup_location)
         logger.info("Order summary", **order_summary)
         
         if submit_order:
@@ -131,50 +130,41 @@ async def _verify_pickup_selected(page: Page) -> None:
         logger.warning("Could not verify pick-up is selected")
 
 
-async def _select_pickup_location(page: Page) -> None:
-    """Select pickup location (South San Francisco preferred)."""
-    logger.info("Selecting pickup location")
+async def _select_pickup_location(page: Page) -> str | None:
+    """Verify and return the selected pickup location.
     
-    # Wait for pickup location dropdown
-    location_selectors = [
-        "select[name*='pickup']",
-        "select[name*='location']",
-        "#pickup-location",
-        "select",  # Generic select as fallback
+    Returns:
+        The pickup location string, or None if not detected
+    """
+    # Pickup location is automatically selected when "Pick up" is chosen
+    # The site selects the closest location by default
+    
+    logger.info("Checking selected pickup location")
+    
+    # Try to find text indicating which location is selected
+    # Look for the pickup location section
+    pickup_text_selectors = [
+        "text=/South San Francisco.*240 Grand/i",
+        "text=/San Francisco.*Fell Street/i",
+        "text=/South San Francisco/i",
+        "text=/1275 Fell Street/i",
+        "text=/240 Grand Ave/i",
     ]
     
-    location_dropdown = None
-    for selector in location_selectors:
+    for selector in pickup_text_selectors:
         try:
-            location_dropdown = await page.wait_for_selector(selector, timeout=5000)
-            if location_dropdown:
-                logger.debug("Found pickup location dropdown", selector=selector)
-                break
-        except PlaywrightTimeout:
+            element = await page.wait_for_selector(selector, timeout=2000)
+            if element:
+                location_text = await element.inner_text()
+                # Extract just the first line (location name)
+                location = location_text.split("\n")[0].strip()[:50]
+                logger.info("Pickup location detected", location=location)
+                return location
+        except Exception:
             continue
     
-    if not location_dropdown:
-        logger.warning("Could not find pickup location dropdown")
-        return
-    
-    # Try to select South San Francisco first, then San Francisco
-    # Based on screenshot: "South San Francisco, 240 Grand Ave, South San Francisco CA, Usually ready in 1 hour - Free"
-    preferred_locations = [
-        "South San Francisco",
-        "San Francisco",
-    ]
-    
-    for location in preferred_locations:
-        try:
-            await location_dropdown.select_option(label=location)
-            logger.info("Selected pickup location", location=location)
-            await page.wait_for_timeout(1000)
-            return
-        except Exception as e:
-            logger.debug("Could not select location", location=location, error=str(e))
-            continue
-    
-    logger.warning("Could not select preferred pickup location, using default")
+    logger.info("Using auto-selected pickup location (unable to verify which)")
+    return None
 
 
 async def _fill_payment_info(page: Page) -> None:
@@ -258,34 +248,63 @@ async def _fill_payment_info(page: Page) -> None:
     logger.info("Payment information filled successfully")
 
 
-async def _get_order_summary(page: Page) -> dict:
-    """Extract order summary information from checkout page."""
+async def _get_order_summary(page: Page, pickup_location: str | None = None) -> dict:
+    """Extract order summary information from checkout page.
+    
+    Args:
+        page: The Playwright page object
+        pickup_location: The pickup location string (if already detected), or None
+    """
     summary = {
         "subtotal": "unknown",
         "tax": "unknown",
         "total": "unknown",
-        "pickup_location": "unknown",
+        "pickup_location": pickup_location or "unknown",
     }
     
-    # Try to get total
-    total_selectors = [
-        ".total",
-        "[data-total]",
-        "text=/^Total/",
-    ]
+    # Try to get subtotal - grandparent contains "Subtotal\n$36.50"
+    try:
+        subtotal_elem = await page.query_selector("text=/^Subtotal$/i")
+        if subtotal_elem:
+            grandparent = await subtotal_elem.evaluate_handle("el => el.parentElement.parentElement")
+            text = await grandparent.inner_text()
+            # Extract price from text like "Subtotal\n$36.50"
+            if "$" in text:
+                price = text.split("$")[1].strip().split()[0]
+                summary["subtotal"] = f"${price}"
+    except Exception as e:
+        logger.debug("Could not get subtotal", error=str(e))
     
-    for selector in total_selectors:
-        element = await page.query_selector(selector)
-        if element:
-            text = await element.inner_text()
-            summary["total"] = text
-            break
+    # Try to get tax - level 4 parent contains "Estimated taxes\n$3.61"
+    try:
+        tax_elem = await page.query_selector("text=/^Estimated taxes$/i")
+        if tax_elem:
+            # Go up 4 levels to find the container with both label and value
+            parent4 = await tax_elem.evaluate_handle(
+                "el => el.parentElement?.parentElement?.parentElement?.parentElement"
+            )
+            text = await parent4.inner_text()
+            # Extract price from text like "Estimated taxes\n$3.61"
+            if "$" in text:
+                price = text.split("$")[1].strip().split()[0]
+                summary["tax"] = f"${price}"
+    except Exception as e:
+        logger.debug("Could not get tax", error=str(e))
     
-    # Try to get pickup location
-    location_element = await page.query_selector("select[name*='pickup'], select[name*='location']")
-    if location_element:
-        selected_option = await location_element.evaluate("el => el.options[el.selectedIndex].text")
-        summary["pickup_location"] = selected_option
+    # Try to get total - grandparent contains "Total\nUSD\n$40.11"
+    try:
+        total_elem = await page.query_selector("text=/^Total$/i")
+        if total_elem:
+            grandparent = await total_elem.evaluate_handle("el => el.parentElement.parentElement")
+            text = await grandparent.inner_text()
+            # Extract price from text like "Total\nUSD\n$40.11"
+            if "$" in text:
+                price = text.split("$")[1].strip().split()[0]
+                summary["total"] = f"${price}"
+    except Exception as e:
+        logger.debug("Could not get total", error=str(e))
+    
+    # Note: pickup_location is passed in as a parameter (already detected earlier)
     
     return summary
 
