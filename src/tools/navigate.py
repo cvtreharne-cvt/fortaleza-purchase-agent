@@ -147,8 +147,10 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
     
     # Handle age verification if present
     age_result = await verify_age(page)
+    age_verified = False
     if age_result["status"] == "success":
         logger.info("Age verification completed before search")
+        age_verified = True
     elif age_result["status"] == "error":
         raise NavigationError(f"Age verification failed: {age_result['message']}")
     
@@ -185,39 +187,67 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
         
         await search_button.click()
         
+        # Check for age verification again after clicking (modal may appear now)
+        # But skip if we already verified - no need to wait for a modal that won't appear
+        if not age_verified:
+            age_result = await verify_age(page)
+            if age_result["status"] == "success":
+                logger.info("Age verification completed after search click")
+            elif age_result["status"] == "error":
+                raise NavigationError(f"Age verification failed: {age_result['message']}")
+        else:
+            logger.debug("Skipping second age verification check (already verified)")
+        
         # Wait for search input to appear
         search_input = await page.wait_for_selector(
             "input[type='search'], input[name='q'], .search__input, input[placeholder*='Search' i]",
             timeout=5000
         )
         
-        # Type product name and submit
+        # Type product name to show search suggestions
         await search_input.fill(product_name)
-        await search_input.press("Enter")
         
-        # Wait for search results
-        await page.wait_for_load_state("networkidle", timeout=10000)
+        # Wait for search suggestions dropdown to appear
+        await page.wait_for_timeout(1000)
         
-        # Look for product in results - try case-insensitive partial match
-        # Use text selector with case-insensitive flag
-        product_selectors = [
-            f"a[href*='products']:has-text('{product_name}')",
-            f"a[href*='products'] >> text=/{product_name}/i",  # Case-insensitive regex
-            f".product-item:has-text('{product_name}') a[href*='products']",
+        # Look for product in the suggestions dropdown (under "Products" section)
+        # Note: Suggestions contain both search queries (/search?q=) and products (/products/)
+        # We want the product link, not the search query link
+        product_name_lower = product_name.lower().replace(' ', '-')
+        suggestion_selectors = [
+            f"a[href^='/products/'][href*='{product_name_lower}']",  # Product link (not search)
+            f".predictive-search a[href^='/products/'][href*='{product_name_lower}']",
+            f"a[href*='products/{product_name_lower}']",  # More specific product path
         ]
         
         product_link = None
-        for selector in product_selectors:
-            try:
-                product_link = await page.wait_for_selector(selector, timeout=3000)
-                if product_link:
-                    logger.debug("Found product link", selector=selector)
-                    break
-            except PlaywrightTimeout:
-                continue
+        for selector in suggestion_selectors:
+            product_link = await page.query_selector(selector)
+            if product_link:
+                logger.info("Found product in search suggestions", selector=selector)
+                break
         
         if not product_link:
-            raise NavigationError(f"Product '{product_name}' not found in search results")
+            # Fallback: press Enter and go to search results page
+            logger.info("Product not in suggestions, trying full search results")
+            await search_input.press("Enter")
+            await page.wait_for_load_state("domcontentloaded")
+            await page.wait_for_timeout(2000)
+            
+            # Try to find in search results
+            result_selectors = [
+                f"a[href*='{product_name_lower}'][href*='products']",
+                f".productitem a[href*='{product_name_lower}']",
+            ]
+            
+            for selector in result_selectors:
+                product_link = await page.query_selector(selector)
+                if product_link:
+                    logger.debug("Found product link in results", selector=selector)
+                    break
+        
+        if not product_link:
+            raise NavigationError(f"Product '{product_name}' not found in search suggestions or results")
         
         # Click on product
         await product_link.click()

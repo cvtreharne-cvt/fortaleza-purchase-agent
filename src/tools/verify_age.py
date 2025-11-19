@@ -38,7 +38,8 @@ async def verify_age(page: Page) -> dict:
         matched_selector = None
         for selector in overlay_selectors:
             try:
-                overlay = await page.wait_for_selector(selector, timeout=2000)
+                # Increase timeout - modal may take a moment to appear
+                overlay = await page.wait_for_selector(selector, timeout=5000)
                 if overlay:
                     matched_selector = selector
                     logger.info("Age verification overlay found", selector=selector)
