@@ -1,4 +1,17 @@
-"""Checkout and payment processing."""
+"""
+Checkout and payment processing.
+
+This module handles the complete checkout workflow:
+1. Verifies we're on the checkout page
+2. Selects "Pick up" as the delivery method
+3. Selects pickup location (South SF preferred, SF fallback)
+4. Fills in credit card payment information (PCI-compliant iframes)
+5. Extracts order summary (subtotal, tax, total, pickup location)
+6. Optionally submits the order based on mode setting
+
+The checkout process supports dryrun mode for testing without actual purchases,
+and includes detection for 3D Secure challenges that require manual intervention.
+"""
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
@@ -8,6 +21,20 @@ from ..core.config import get_settings, Mode
 from ..core.errors import ThreeDSecureRequired
 
 logger = get_logger(__name__)
+
+# Timeout constants (in milliseconds)
+SELECTOR_WAIT_TIMEOUT = 3000  # Standard timeout for element selectors
+PICKUP_LOCATION_TIMEOUT = 2000  # Timeout for pickup location detection
+PAGE_LOAD_DELAY = 1000  # Delay after clicking pickup option
+PAYMENT_SECTION_DELAY = 1000  # Delay after scrolling to payment section
+CARD_NUMBER_IFRAME_TIMEOUT = 5000  # Timeout for card number iframe
+CARD_INPUT_TIMEOUT = 5000  # Timeout for card input field
+FIELD_TRANSITION_DELAY = 500  # Delay between form field transitions
+TYPING_DELAY = 30  # Delay between keystrokes (ms)
+INITIAL_TYPING_DELAY = 200  # Delay before starting to type in card field
+ORDER_SUBMISSION_DELAY = 5000  # Wait time after clicking Pay now
+SECURE_CHECK_TIMEOUT = 2000  # Timeout for 3D Secure detection
+ERROR_CHECK_TIMEOUT = 2000  # Timeout for payment error detection
 
 
 async def checkout_and_pay(page: Page, submit_order: bool = None) -> dict:
@@ -118,11 +145,11 @@ async def _verify_pickup_selected(page: Page) -> None:
         
         for selector in pickup_click_selectors:
             try:
-                element = await page.wait_for_selector(selector, timeout=3000)
+                element = await page.wait_for_selector(selector, timeout=SELECTOR_WAIT_TIMEOUT)
                 if element:
                     await element.click()
                     logger.info("Selected pick-up option")
-                    await page.wait_for_timeout(1000)
+                    await page.wait_for_timeout(PAGE_LOAD_DELAY)
                     return
             except PlaywrightTimeout:
                 continue
@@ -153,7 +180,7 @@ async def _select_pickup_location(page: Page) -> str | None:
     
     for selector in pickup_text_selectors:
         try:
-            element = await page.wait_for_selector(selector, timeout=2000)
+            element = await page.wait_for_selector(selector, timeout=PICKUP_LOCATION_TIMEOUT)
             if element:
                 location_text = await element.inner_text()
                 # Extract just the first line (location name)
@@ -175,7 +202,7 @@ async def _fill_payment_info(page: Page) -> None:
     payment_section = await page.query_selector("text=/Payment/i")
     if payment_section:
         await payment_section.scroll_into_view_if_needed()
-        await page.wait_for_timeout(1000)
+        await page.wait_for_timeout(PAYMENT_SECTION_DELAY)
         logger.debug("Scrolled to payment section")
     
     # Get payment info from secrets
@@ -196,18 +223,18 @@ async def _fill_payment_info(page: Page) -> None:
         # Look for iframe with title containing "Card number"
         card_number_iframe = await page.wait_for_selector(
             "iframe[title*='Field container for: Card number' i], iframe[name*='number' i]",
-            timeout=5000
+            timeout=CARD_NUMBER_IFRAME_TIMEOUT
         )
         if card_number_iframe:
             card_frame = await card_number_iframe.content_frame()
-            card_input = await card_frame.wait_for_selector("input", timeout=5000)
+            card_input = await card_frame.wait_for_selector("input", timeout=CARD_INPUT_TIMEOUT)
             await card_input.click(force=True)
-            await page.wait_for_timeout(200)
-            await card_input.type(cc_number, delay=30)
+            await page.wait_for_timeout(INITIAL_TYPING_DELAY)
+            await card_input.type(cc_number, delay=TYPING_DELAY)
             logger.info("Filled card number", last_4=cc_number[-4:])
             # Press Tab to move to expiration field
             await card_input.press("Tab")
-            await page.wait_for_timeout(500)
+            await page.wait_for_timeout(FIELD_TRANSITION_DELAY)
         else:
             raise Exception("Could not find card number iframe")
     except Exception as e:
@@ -218,29 +245,29 @@ async def _fill_payment_info(page: Page) -> None:
     logger.debug("Filling expiration date")
     try:
         exp_value = f"{cc_exp_month.zfill(2)}{cc_exp_year[-2:]}"
-        await page.keyboard.type(exp_value, delay=30)
+        await page.keyboard.type(exp_value, delay=TYPING_DELAY)
         logger.info("Filled expiration date", value=f"{cc_exp_month}/{cc_exp_year[-2:]}")
         # Tab to CVV field
         await page.keyboard.press("Tab")
-        await page.wait_for_timeout(500)
+        await page.wait_for_timeout(FIELD_TRANSITION_DELAY)
     except Exception as e:
         logger.warning("Could not fill expiration date", error=str(e))
-    
+
     # Fill security code (CVV, focus should already be here after Tab)
     logger.debug("Filling CVV")
     try:
-        await page.keyboard.type(cc_cvv, delay=30)
+        await page.keyboard.type(cc_cvv, delay=TYPING_DELAY)
         logger.info("Filled CVV")
         # Tab to name on card field
         await page.keyboard.press("Tab")
-        await page.wait_for_timeout(500)
+        await page.wait_for_timeout(FIELD_TRANSITION_DELAY)
     except Exception as e:
         logger.warning("Could not fill CVV", error=str(e))
-    
+
     # Fill name on card (focus should already be here after Tab)
     logger.debug("Filling name on card")
     try:
-        await page.keyboard.type(billing_name, delay=30)
+        await page.keyboard.type(billing_name, delay=TYPING_DELAY)
         logger.info("Filled name on card")
     except Exception as e:
         logger.warning("Could not fill name on card", error=str(e))
@@ -250,7 +277,7 @@ async def _fill_payment_info(page: Page) -> None:
 
 async def _get_order_summary(page: Page, pickup_location: str | None = None) -> dict:
     """Extract order summary information from checkout page.
-    
+
     Args:
         page: The Playwright page object
         pickup_location: The pickup location string (if already detected), or None
@@ -261,7 +288,7 @@ async def _get_order_summary(page: Page, pickup_location: str | None = None) -> 
         "total": "unknown",
         "pickup_location": pickup_location or "unknown",
     }
-    
+
     # Try to get subtotal - grandparent contains "Subtotal\n$36.50"
     try:
         subtotal_elem = await page.query_selector("text=/^Subtotal$/i")
@@ -274,7 +301,7 @@ async def _get_order_summary(page: Page, pickup_location: str | None = None) -> 
                 summary["subtotal"] = f"${price}"
     except Exception as e:
         logger.debug("Could not get subtotal", error=str(e))
-    
+
     # Try to get tax - level 4 parent contains "Estimated taxes\n$3.61"
     try:
         tax_elem = await page.query_selector("text=/^Estimated taxes$/i")
@@ -290,7 +317,7 @@ async def _get_order_summary(page: Page, pickup_location: str | None = None) -> 
                 summary["tax"] = f"${price}"
     except Exception as e:
         logger.debug("Could not get tax", error=str(e))
-    
+
     # Try to get total - grandparent contains "Total\nUSD\n$40.11"
     try:
         total_elem = await page.query_selector("text=/^Total$/i")
@@ -303,9 +330,19 @@ async def _get_order_summary(page: Page, pickup_location: str | None = None) -> 
                 summary["total"] = f"${price}"
     except Exception as e:
         logger.debug("Could not get total", error=str(e))
-    
+
     # Note: pickup_location is passed in as a parameter (already detected earlier)
-    
+
+    # Log warnings for any fields that could not be extracted
+    if summary["subtotal"] == "unknown":
+        logger.warning("Could not extract subtotal from order summary")
+    if summary["tax"] == "unknown":
+        logger.warning("Could not extract tax from order summary")
+    if summary["total"] == "unknown":
+        logger.warning("Could not extract total from order summary")
+    if summary["pickup_location"] == "unknown":
+        logger.warning("Could not determine pickup location")
+
     return summary
 
 
@@ -326,21 +363,21 @@ async def _submit_order(page: Page) -> dict:
     submit_button = None
     for selector in submit_selectors:
         try:
-            submit_button = await page.wait_for_selector(selector, timeout=3000)
+            submit_button = await page.wait_for_selector(selector, timeout=SELECTOR_WAIT_TIMEOUT)
             if submit_button:
                 logger.debug("Found submit button", selector=selector)
                 break
         except PlaywrightTimeout:
             continue
-    
+
     if not submit_button:
         raise Exception("Could not find 'Pay now' button")
-    
+
     logger.info("Clicking 'Pay now' button")
     await submit_button.click()
-    
+
     # Wait for navigation or processing
-    await page.wait_for_timeout(5000)
+    await page.wait_for_timeout(ORDER_SUBMISSION_DELAY)
     
     # Check for 3D Secure
     if await _check_for_3d_secure(page):
@@ -379,13 +416,13 @@ async def _check_for_3d_secure(page: Page) -> bool:
     
     for selector in secure_selectors:
         try:
-            element = await page.wait_for_selector(selector, timeout=2000)
+            element = await page.wait_for_selector(selector, timeout=SECURE_CHECK_TIMEOUT)
             if element:
                 logger.debug("Found 3D Secure indicator", selector=selector)
                 return True
         except PlaywrightTimeout:
             continue
-    
+
     return False
 
 
@@ -399,15 +436,15 @@ async def _check_for_payment_error(page: Page) -> str | None:
         "text=/card.*declined/i",
         "text=/error/i",
     ]
-    
+
     for selector in error_selectors:
         try:
-            element = await page.wait_for_selector(selector, timeout=2000)
+            element = await page.wait_for_selector(selector, timeout=ERROR_CHECK_TIMEOUT)
             if element:
                 error_text = await element.inner_text()
                 logger.debug("Found error message", selector=selector, error=error_text)
                 return error_text
         except PlaywrightTimeout:
             continue
-    
+
     return None

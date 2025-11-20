@@ -11,6 +11,11 @@ logger = get_logger(__name__)
 
 BASE_URL = "https://www.bittersandbottles.com"
 
+# Timeout constants (in milliseconds)
+SELECTOR_WAIT_TIMEOUT = 3000  # Standard timeout for element selectors
+TWO_FACTOR_CHECK_TIMEOUT = 1000  # Quick timeout for 2FA indicators
+ERROR_CHECK_TIMEOUT = 1000  # Quick timeout for error messages
+
 
 async def login_to_account(page: Page) -> dict:
     """
@@ -79,7 +84,7 @@ async def login_to_account(page: Page) -> dict:
         email_input = None
         for selector in email_selectors:
             try:
-                email_input = await page.wait_for_selector(selector, timeout=3000)
+                email_input = await page.wait_for_selector(selector, timeout=SELECTOR_WAIT_TIMEOUT)
                 if email_input:
                     logger.debug("Found email input", selector=selector)
                     break
@@ -102,7 +107,7 @@ async def login_to_account(page: Page) -> dict:
         password_input = None
         for selector in password_selectors:
             try:
-                password_input = await page.wait_for_selector(selector, timeout=3000)
+                password_input = await page.wait_for_selector(selector, timeout=SELECTOR_WAIT_TIMEOUT)
                 if password_input:
                     logger.debug("Found password input", selector=selector)
                     break
@@ -128,7 +133,7 @@ async def login_to_account(page: Page) -> dict:
         submit_button = None
         for selector in submit_selectors:
             try:
-                submit_button = await page.wait_for_selector(selector, timeout=3000)
+                submit_button = await page.wait_for_selector(selector, timeout=SELECTOR_WAIT_TIMEOUT)
                 if submit_button:
                     logger.debug("Found submit button", selector=selector)
                     break
@@ -219,13 +224,13 @@ async def _check_for_2fa(page: Page) -> bool:
     
     for selector in twofa_selectors:
         try:
-            element = await page.wait_for_selector(selector, timeout=1000)
+            element = await page.wait_for_selector(selector, timeout=TWO_FACTOR_CHECK_TIMEOUT)
             if element:
                 logger.debug("Found 2FA indicator", selector=selector)
                 return True
         except PlaywrightTimeout:
             continue
-    
+
     return False
 
 
@@ -252,12 +257,12 @@ async def _check_for_login_error(page: Page) -> str | None:
     
     for selector in error_selectors:
         try:
-            element = await page.wait_for_selector(selector, timeout=1000)
+            element = await page.wait_for_selector(selector, timeout=ERROR_CHECK_TIMEOUT)
             if element:
                 error_text = await element.inner_text()
                 logger.debug("Found error message", selector=selector, error=error_text)
                 return error_text
         except PlaywrightTimeout:
             continue
-    
+
     return None

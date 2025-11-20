@@ -203,6 +203,84 @@ curl -X POST http://localhost:8080/webhook/pi \
 PWDEBUG=1 HEADLESS=false python -m src.app.main
 ```
 
+### 5. Using Debug Scripts for Development
+
+The `scripts/` directory contains debug scripts for testing individual tools in isolation. These are invaluable for development and troubleshooting.
+
+#### Available Debug Scripts
+
+**`scripts/debug_login.py`** - Test login functionality
+```bash
+HEADLESS=false python scripts/debug_login.py
+```
+Use when:
+- Testing login after modifying `login.py`
+- Debugging authentication failures
+- Verifying age verification works correctly
+- Checking cookie persistence
+
+**`scripts/debug_cart.py`** - Test add-to-cart functionality
+```bash
+HEADLESS=false python scripts/debug_cart.py
+```
+Use when:
+- Testing cart operations after modifying `cart.py`
+- Debugging "Add to Cart" button detection
+- Verifying cart drawer appearance
+- Testing sold-out product handling
+
+**`scripts/debug_checkout.py`** - Test checkout flow (DRYRUN)
+```bash
+HEADLESS=false python scripts/debug_checkout.py
+```
+Use when:
+- Testing checkout after modifying `checkout.py`
+- Debugging payment form filling issues
+- Verifying order summary extraction
+- Testing pickup location detection
+- **Note**: Runs in dryrun mode, will NOT submit orders
+
+**`scripts/debug_order_summary.py`** - Inspect order summary DOM
+```bash
+HEADLESS=false python scripts/debug_order_summary.py
+```
+Use when:
+- Order summary extraction returns "unknown" values
+- Website structure changes break selectors
+- Need to find new CSS selectors for price elements
+- **Output**: Detailed DOM structure analysis
+
+**`scripts/debug_search.py`** - Test search functionality
+```bash
+HEADLESS=false python scripts/debug_search.py
+```
+Use when:
+- Testing search after modifying `navigate.py`
+- Debugging search suggestion dropdown
+- Verifying product link detection
+- Investigating search result page changes
+
+#### Debug Script Best Practices
+
+1. **Always run with `HEADLESS=false`** to see what's happening
+2. **Check screenshots** - All debug scripts save screenshots on success/error
+3. **Update test URLs** - If test products become unavailable, update the `TEST_PRODUCT_URL` constants
+4. **Use for development** - These scripts are not automated tests, they're for manual inspection
+5. **Keep credentials safe** - Debug scripts use `.env.local`, never commit this file
+
+#### Example: Debugging Order Summary Extraction
+
+If order summary extraction breaks:
+```bash
+# 1. Run the diagnostic script
+HEADLESS=false python scripts/debug_order_summary.py
+
+# 2. Review the console output for DOM structure
+# 3. Look for parent/grandparent relationships in the output
+# 4. Update selectors in src/tools/checkout.py _get_order_summary()
+# 5. Re-run to verify the fix
+```
+
 ## GCP Deployment
 
 ### 1. Create GCP Project

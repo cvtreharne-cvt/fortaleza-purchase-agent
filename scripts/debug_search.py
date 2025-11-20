@@ -1,4 +1,30 @@
-"""Debug script to inspect search results."""
+"""
+Debug script to inspect search results and test search functionality.
+
+Usage: Run this script to debug the product search flow, including search
+       suggestions, result pages, and product link selection.
+
+When to use:
+- Testing search functionality after modifying navigate.py
+- Debugging search suggestion dropdown issues
+- Verifying product links are correctly detected
+- Investigating search result page structure changes
+
+Requirements:
+- .env.local with valid credentials
+- HEADLESS=false REQUIRED to see browser behavior
+- Internet connection to access B&B website
+
+Output: This script prints detailed information about:
+        - Search suggestion dropdown structure
+        - Product links found in suggestions
+        - Full search results page links
+        - Product grid structure
+
+Note: This script searches for "Fortaleza" by default. The search might
+      return no results if the product is not available. This is a
+      diagnostic tool for understanding search behavior.
+"""
 
 import asyncio
 from src.core.browser import managed_browser, get_browser_manager
@@ -13,27 +39,27 @@ async def debug_search():
     async with managed_browser():
         browser = get_browser_manager()
         page = await browser.new_page()
-        
+
         print("1. Navigating to homepage...")
         await page.goto('https://www.bittersandbottles.com')
-        
+
         print("2. Handling age verification...")
         await verify_age(page)
-        
+
         print("3. Clicking search icon...")
         search = await page.wait_for_selector('svg.icon-search')
         await search.click()
         await page.wait_for_timeout(1000)  # Wait for animation
-        
+
         print("4. Typing 'Fortaleza' in search...")
         search_input = await page.wait_for_selector('input[type=search], input[name=q]', state='visible')
         await page.wait_for_timeout(500)  # Ensure input is ready
         await search_input.click()  # Focus the input
         await search_input.type('Fortaleza', delay=100)  # Type with delay
-        
+
         print("\n5. Waiting for search suggestions...")
         await page.wait_for_timeout(2000)
-        
+
         print("6. Looking for suggestions dropdown...")
         # Check various suggestion containers
         suggestions_container = await page.query_selector('.predictive-search, [role="listbox"], .search-suggestions')
@@ -41,13 +67,13 @@ async def debug_search():
             print("   ✓ Found suggestions container")
             all_links = await suggestions_container.query_selector_all('a')
             print(f"   Found {len(all_links)} links in suggestions\n")
-            
+
             for i, link in enumerate(all_links[:5]):
                 href = await link.get_attribute('href')
                 text = await link.inner_text()
                 print(f"   {i+1}. {text[:50]}")
                 print(f"      href: {href}")
-            
+
             # Try to click the product link directly
             print("\n7. Trying to click product link from suggestions...")
             product_link = await suggestions_container.query_selector("a[href^='/products/'][href*='fortaleza']")
@@ -71,42 +97,42 @@ async def debug_search():
             print(f"   Found {len(all_links)} links with 'fortaleza' in href")
             print("\n7. Pressing Enter to see full results...")
             await search_input.press('Enter')
-        
+
         print("6. Waiting for search results...")
         await page.wait_for_load_state('domcontentloaded')
         await page.wait_for_timeout(2000)
-        
+
         print(f"\n✓ Current URL: {page.url}")
-        
+
         # Try to find product links
         print("\n7. Looking for product links...")
-        
+
         all_links = await page.query_selector_all('a[href*="products"]')
         print(f"   Found {len(all_links)} total product links\n")
-        
+
         # Now try to find Fortaleza specifically
         print("8. Looking specifically for Fortaleza links...")
-        
+
         # Try our current selectors
         selector1 = await page.query_selector('a[href*="products"]:has-text("Fortaleza")')
         selector2 = await page.query_selector('.productitem a[href*="fortaleza"]')
         selector3 = await page.query_selector('a[href*="fortaleza-blanco-tequila"]')
-        
+
         print(f"   Selector 'a:has-text(Fortaleza)': {'FOUND' if selector1 else 'NOT FOUND'}")
         print(f"   Selector '.productitem a[href*=fortaleza]': {'FOUND' if selector2 else 'NOT FOUND'}")
         print(f"   Selector 'a[href*=fortaleza-blanco-tequila]': {'FOUND' if selector3 else 'NOT FOUND'}")
-        
+
         if selector3:
             text = await selector3.inner_text()
             href = await selector3.get_attribute('href')
             print(f"\n   ✓ Found Fortaleza link!")
             print(f"     Text: {text}")
             print(f"     Href: {href}")
-        
+
         print("\n9. Showing product grid items:")
         product_items = await page.query_selector_all('.productgrid--item, .productitem, [class*="product"]')
         print(f"   Found {len(product_items)} product items")
-        
+
         if len(product_items) > 0:
             print("\n   First 3 product items:")
             for i, item in enumerate(product_items[:3]):
@@ -114,7 +140,7 @@ async def debug_search():
                 text = (await item.inner_text()).strip()[:100]
                 print(f"   {i+1}. Links in item: {len(links)}")
                 print(f"      Text: {text}")
-        
+
         print("\n10. Done! Check output above.")
         print("    Press Ctrl+C to exit")
         await page.wait_for_timeout(300000)  # Wait 5 minutes

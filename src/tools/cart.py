@@ -7,6 +7,12 @@ from ..core.errors import ProductSoldOutError
 
 logger = get_logger(__name__)
 
+# Timeout constants (in milliseconds)
+SELECTOR_WAIT_TIMEOUT = 3000  # Standard timeout for element selectors
+SOLD_OUT_CHECK_TIMEOUT = 1000  # Quick timeout for sold out indicators
+CART_DRAWER_TIMEOUT = 5000  # Timeout for cart drawer to appear
+SUCCESS_INDICATOR_TIMEOUT = 2000  # Timeout for success indicators
+
 
 async def add_to_cart(page: Page, proceed_to_checkout: bool = False) -> dict:
     """
@@ -51,7 +57,7 @@ async def add_to_cart(page: Page, proceed_to_checkout: bool = False) -> dict:
         add_button = None
         for selector in add_to_cart_selectors:
             try:
-                add_button = await page.wait_for_selector(selector, timeout=3000)
+                add_button = await page.wait_for_selector(selector, timeout=SELECTOR_WAIT_TIMEOUT)
                 if add_button:
                     # Check if button is disabled
                     is_disabled = await add_button.is_disabled()
@@ -73,7 +79,7 @@ async def add_to_cart(page: Page, proceed_to_checkout: bool = False) -> dict:
         # Wait for cart drawer to appear from top
         # Based on screenshot: drawer has "Added to your cart:" text
         try:
-            await page.wait_for_selector("text=/Added to.*cart/i", timeout=5000)
+            await page.wait_for_selector("text=/Added to.*cart/i", timeout=CART_DRAWER_TIMEOUT)
             logger.info("Cart drawer appeared with success message")
         except PlaywrightTimeout:
             logger.warning("Cart drawer success message not found, but continuing")
@@ -102,7 +108,7 @@ async def add_to_cart(page: Page, proceed_to_checkout: bool = False) -> dict:
             checkout_button = None
             for selector in checkout_selectors:
                 try:
-                    checkout_button = await page.wait_for_selector(selector, timeout=3000)
+                    checkout_button = await page.wait_for_selector(selector, timeout=SELECTOR_WAIT_TIMEOUT)
                     if checkout_button:
                         logger.debug("Found checkout button", selector=selector)
                         break
@@ -156,13 +162,13 @@ async def _is_sold_out(page: Page) -> bool:
     
     for selector in sold_out_selectors:
         try:
-            element = await page.wait_for_selector(selector, timeout=1000)
+            element = await page.wait_for_selector(selector, timeout=SOLD_OUT_CHECK_TIMEOUT)
             if element:
                 logger.debug("Found sold out indicator", selector=selector)
                 return True
         except PlaywrightTimeout:
             continue
-    
+
     return False
 
 
@@ -186,19 +192,19 @@ async def _verify_item_added(page: Page) -> bool:
     
     for selector in success_indicators:
         try:
-            element = await page.wait_for_selector(selector, timeout=2000)
+            element = await page.wait_for_selector(selector, timeout=SUCCESS_INDICATOR_TIMEOUT)
             if element:
                 logger.debug("Found cart success indicator", selector=selector)
                 return True
         except PlaywrightTimeout:
             continue
-    
+
     # Check cart count as fallback
     cart_count = await _get_cart_count(page)
     if cart_count > 0:
         logger.info("Verified item added via cart count", count=cart_count)
         return True
-    
+
     return False
 
 
