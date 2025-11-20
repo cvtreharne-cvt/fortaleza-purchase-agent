@@ -76,3 +76,4 @@ playwright-report/
 .env.production
 
 tags
+*.png
