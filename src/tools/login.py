@@ -3,8 +3,9 @@
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
 from ..core.logging import get_logger
+from ..core.notify import send_notification
 from ..core.secrets import get_secret_manager
-from ..core.errors import TwoFactorRequired
+from ..core.errors import TwoFactorRequired, CaptchaRequired
 from .verify_age import verify_age
 
 logger = get_logger(__name__)
@@ -65,14 +66,20 @@ async def login_to_account(page: Page) -> dict:
             logger.info("Age verification completed before login")
         elif age_result["status"] == "error":
             raise Exception(f"Age verification failed: {age_result['message']}")
-        
+
         # Get credentials from secrets
         secret_manager = get_secret_manager()
         email = secret_manager.get_secret("bnb_email")
         password = secret_manager.get_secret("bnb_password")
-        
+
         logger.info("Filling login form", email=email[:3] + "***")
-        
+
+        # Check for CAPTCHA before attempting to find login fields
+        # CAPTCHA can appear on login page and overlay/replace the form
+        if await _check_for_captcha(page):
+            logger.warning("CAPTCHA detected on login page - human intervention needed")
+            raise CaptchaRequired("CAPTCHA challenge detected - manual intervention needed")
+
         # Find and fill email field
         email_selectors = [
             "input[name='customer[email]']",
@@ -173,8 +180,24 @@ async def login_to_account(page: Page) -> dict:
         # If we're somewhere else, assume success
         logger.info("Login appears successful", current_url=page.url)
         return {"status": "success", "message": "Login successful"}
-        
-    except TwoFactorRequired:
+
+    except CaptchaRequired as e:
+        # Send emergency notification immediately
+        logger.error("CAPTCHA required - sending emergency notification")
+        send_notification(
+            "🚨 CAPTCHA Required",
+            "CAPTCHA challenge detected on login page. Please solve manually and the agent will resume.",
+            priority=2  # Emergency - requires acknowledgment
+        )
+        raise
+    except TwoFactorRequired as e:
+        # Send emergency notification immediately
+        logger.error("2FA required - sending emergency notification")
+        send_notification(
+            "🚨 2FA Required",
+            "Two-factor authentication is required to login. Please complete manually.",
+            priority=2  # Emergency - requires acknowledgment
+        )
         raise
     except Exception as e:
         logger.error("Login failed", error=str(e))
@@ -237,10 +260,10 @@ async def _check_for_2fa(page: Page) -> bool:
 async def _check_for_login_error(page: Page) -> str | None:
     """
     Check for login error messages.
-    
+
     Args:
         page: Playwright page
-        
+
     Returns:
         Error message if found, None otherwise
     """
@@ -254,7 +277,7 @@ async def _check_for_login_error(page: Page) -> str | None:
         "text=/invalid email/i",
         "text=/login failed/i",
     ]
-    
+
     for selector in error_selectors:
         try:
             element = await page.wait_for_selector(selector, timeout=ERROR_CHECK_TIMEOUT)
@@ -266,3 +289,56 @@ async def _check_for_login_error(page: Page) -> str | None:
             continue
 
     return None
+
+
+async def _check_for_captcha(page: Page) -> bool:
+    """
+    Check if CAPTCHA is present on the page.
+
+    Args:
+        page: Playwright page
+
+    Returns:
+        True if CAPTCHA is detected, False otherwise
+    """
+    # Look for common CAPTCHA indicators
+    # Covers reCAPTCHA, hCaptcha, and generic CAPTCHA implementations
+    captcha_selectors = [
+        # Google reCAPTCHA v2 (checkbox and image challenge)
+        "iframe[src*='recaptcha']",
+        ".g-recaptcha",
+        "#g-recaptcha",
+        "[data-sitekey]",  # reCAPTCHA site key attribute
+
+        # hCaptcha
+        "iframe[src*='hcaptcha']",
+        ".h-captcha",
+        "#h-captcha",
+
+        # Generic CAPTCHA
+        ".captcha",
+        "#captcha",
+        "img[alt*='captcha' i]",
+        "img[src*='captcha' i]",
+        "[class*='captcha' i]",
+        "[id*='captcha' i]",
+
+        # Text indicators
+        "text=/verify you are human/i",
+        "text=/captcha/i",
+        "text=/prove you're not a robot/i",
+    ]
+
+    for selector in captcha_selectors:
+        try:
+            # Use shorter timeout for CAPTCHA check (1 second)
+            element = await page.wait_for_selector(selector, timeout=1000)
+            if element:
+                # Additional check: ensure element is visible
+                if await element.is_visible():
+                    logger.debug("Found CAPTCHA indicator", selector=selector)
+                    return True
+        except PlaywrightTimeout:
+            continue
+
+    return False

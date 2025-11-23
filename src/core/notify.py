@@ -80,7 +80,12 @@ class PushoverClient:
             "message": message,
             "priority": priority.value,
         }
-        
+
+        # Emergency priority requires retry and expire parameters
+        if priority == NotificationPriority.EMERGENCY:
+            payload["retry"] = 30  # Retry every 30 seconds
+            payload["expire"] = 3600  # Stop after 1 hour
+
         if title:
             payload["title"] = title
         if url:
@@ -165,3 +170,35 @@ def get_pushover_client() -> PushoverClient:
     if _pushover_client is None:
         _pushover_client = PushoverClient()
     return _pushover_client
+
+
+def send_notification(
+    title: str,
+    message: str,
+    priority: int = 0,
+    url: Optional[str] = None,
+    url_title: Optional[str] = None
+) -> bool:
+    """
+    Send a notification using Pushover.
+
+    Helper function for quick notifications without instantiating PushoverClient.
+
+    Args:
+        title: Notification title
+        message: Notification message
+        priority: Priority level (-2 to 2, where 2 is EMERGENCY)
+        url: Optional URL to include
+        url_title: Optional title for the URL
+
+    Returns:
+        True if sent successfully, False otherwise
+    """
+    client = get_pushover_client()
+    return client.send(
+        message=message,
+        title=title,
+        priority=NotificationPriority(priority),
+        url=url,
+        url_title=url_title
+    )

@@ -21,6 +21,7 @@ class BrowserManager:
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
+        self.page: Optional[Page] = None
         self._start_lock = asyncio.Lock()
         
     async def start(self) -> None:
@@ -35,9 +36,10 @@ class BrowserManager:
             # Start Playwright
             self.playwright = await async_playwright().start()
 
-            # Launch Chromium
+            # Launch Chromium with extended timeout for Cloud Run cold starts
             self.browser = await self.playwright.chromium.launch(
                 headless=self.settings.headless,
+                timeout=self.settings.browser_launch_timeout,
                 args=[
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -57,6 +59,9 @@ class BrowserManager:
             # Set default timeouts
             self.context.set_default_timeout(self.settings.browser_timeout)
             self.context.set_default_navigation_timeout(self.settings.navigation_timeout)
+
+            # Create initial page for agent tools to use
+            self.page = await self.context.new_page()
 
             logger.info("Browser started successfully")
     

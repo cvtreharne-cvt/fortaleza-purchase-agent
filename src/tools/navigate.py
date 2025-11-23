@@ -38,13 +38,17 @@ async def navigate_to_product(
 
     try:
         logger.info("Navigating to direct link", url=direct_link)
-        
+
+        # Navigate and wait for redirects to complete (tracking links may redirect multiple times)
         response = await page.goto(direct_link, wait_until="domcontentloaded")
-        
-        # Check for protocol errors (e.g., trk.bittersandbottles.com)
-        if "trk." in page.url:
-            logger.warning("Protocol error: redirect domain detected", url=page.url)
-            raise ProtocolError(f"Protocol error: redirected to {page.url}")
+
+        # Wait a bit for any JavaScript redirects to complete
+        await page.wait_for_timeout(2000)
+
+        # Check if we're still on a tracking domain after redirects (shouldn't happen)
+        if "trk." in page.url or page.url == direct_link:
+            logger.warning("Stuck on tracking/redirect page", url=page.url)
+            raise ProtocolError(f"Failed to redirect from tracking link: {page.url}")
         
         # Check for 404
         if response and response.status == 404:
@@ -66,17 +70,26 @@ async def navigate_to_product(
         }
 
     except (ProtocolError, PageNotFoundError, UnexpectedPageError, PlaywrightTimeout) as e:
+        # Require product_name for search fallback - no default
+        if not product_name:
+            logger.error("Direct link failed and no product_name provided for search fallback")
+            await page.close()
+            raise NavigationError(
+                f"Direct link failed and no product name specified for search fallback. "
+                f"Direct link error: {str(e)}"
+            )
+
         logger.warning(
             "Direct link failed, trying search fallback",
             error=str(e),
-            product_name=product_name or settings.product_name
+            product_name=product_name
         )
 
         # Fallback to homepage + search
         try:
             search_result = await _search_for_product(
                 page,
-                product_name or settings.product_name
+                product_name
             )
             return search_result
         except Exception as search_error:
@@ -100,29 +113,24 @@ async def _verify_product_page(page: Page) -> bool:
         True if on product page, False otherwise
     """
     try:
-        # Check for product page indicators
-        # Must have: Product title
-        # Must have at least one: Add to cart button, Notify button, or Sold Out text
+        # Simple check: URL contains '/products/' and we're not on a collection/search page
+        url = page.url
+        if '/products/' in url and '/search' not in url and '/collections' not in url:
+            logger.debug("URL indicates product page", url=url)
 
-        # First verify title exists
-        await page.wait_for_selector(
-            "h1.product-title, .product__title, [data-product-title]",
-            timeout=5000
-        )
+            # Check for essential product page indicators
+            has_price = await page.query_selector(".price, [data-price], .product-price") is not None
+            has_add_to_cart = await page.query_selector("button[name='add'], .add-to-cart, [data-add-to-cart]") is not None
 
-        # Check for product action indicators (not just price)
-        add_to_cart = await page.query_selector(
-            "button[name='add'], .product-form__submit, [data-add-to-cart]"
-        )
-        notify_me = await page.query_selector("text=/notify me when available/i")
-        sold_out = await page.query_selector("text=/sold out/i")
+            # If we have price or add to cart button, it's a product page
+            if has_price or has_add_to_cart:
+                logger.debug("Product page verified", has_price=has_price, has_add_to_cart=has_add_to_cart)
+                return True
 
-        # Require title AND at least one product action indicator
-        has_action_indicator = (add_to_cart is not None) or (notify_me is not None) or (sold_out is not None)
+        return False
 
-        return has_action_indicator
-
-    except PlaywrightTimeout:
+    except Exception as e:
+        logger.warning("Error verifying product page", error=str(e))
         return False
 
 
@@ -235,16 +243,27 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
             await page.wait_for_timeout(2000)
             
             # Try to find in search results
+            # Be more flexible with matching - split product name into key words
+            # For "Hamilton Grass Skirt Blend Rum", try matching on "hamilton" and "grass"
+            name_parts = product_name_lower.split('-')
+
             result_selectors = [
-                f"a[href*='{product_name_lower}'][href*='products']",
-                f".productitem a[href*='{product_name_lower}']",
+                f"a[href*='{product_name_lower}'][href*='products']",  # Exact match
+                f".productitem a[href*='{product_name_lower}']",       # Product item with exact
+                f"a[href*='products'][href*='{name_parts[0]}']",       # First word (e.g., "hamilton")
+                ".product-item a[href*='products']",                    # Any product link
+                "a.product-link[href*='products']",                     # Product link class
             ]
-            
+
             for selector in result_selectors:
-                product_link = await page.query_selector(selector)
-                if product_link:
-                    logger.debug("Found product link in results", selector=selector)
-                    break
+                try:
+                    product_link = await page.query_selector(selector)
+                    if product_link:
+                        href = await product_link.get_attribute('href')
+                        logger.debug("Found product link in results", selector=selector, href=href)
+                        break
+                except Exception:
+                    continue
         
         if not product_link:
             raise NavigationError(f"Product '{product_name}' not found in search suggestions or results")

@@ -1,6 +1,6 @@
-# Fortaleza Purchase Agent
+# Bitters & Bottles Purchase Agent
 
-An AI agent that automatically purchases Fortaleza tequila from Bitters & Bottles when notified via email.
+An AI agent that automatically purchases products from Bitters & Bottles Spirit Shop when notified via email.
 
 **Capstone Project: Kaggle x Google 5-Day AI Agents Intensive Course**
 

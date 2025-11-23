@@ -37,8 +37,9 @@ class Settings(BaseSettings):
     
     # Browser Configuration
     headless: bool = Field(default=True, description="Run browser in headless mode")
-    browser_timeout: int = Field(default=30000, description="Browser timeout in milliseconds")
-    navigation_timeout: int = Field(default=60000, description="Navigation timeout in milliseconds")
+    browser_launch_timeout: int = Field(default=300000, description="Browser launch timeout in milliseconds (5 minutes for Cloud Run cold starts)")
+    browser_timeout: int = Field(default=60000, description="Browser timeout in milliseconds")
+    navigation_timeout: int = Field(default=120000, description="Navigation timeout in milliseconds (2 minutes for slow Cloud Run responses)")
     
     # Retry Configuration
     max_retries: int = Field(default=3, description="Maximum retry attempts")
@@ -71,7 +72,8 @@ class Settings(BaseSettings):
     
     # Google Gemini API Key (for ADK)
     google_api_key: Optional[str] = Field(default=None, description="Google Gemini API key")
-    
+    agent_model: str = Field(default="gemini-2.5-flash-lite", description="Google Gemini model for agent")
+
     # Webhook Configuration
     webhook_timestamp_tolerance: int = Field(default=300, description="Webhook timestamp tolerance in seconds")
     
