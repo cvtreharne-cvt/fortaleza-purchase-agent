@@ -429,7 +429,7 @@ Begin the purchase process now."""
         send_notification(
             f"❌ Purchase Failed",
             f"Product: {product_name}\nError: {str(e)}\nEvent: {event_id}",
-            priority=1
+            priority=2  # Emergency - requires acknowledgment
         )
 
         return {
