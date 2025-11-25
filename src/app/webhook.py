@@ -5,9 +5,10 @@ import hashlib
 import time
 from typing import Set
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
 
+from agents.fortaleza_agent.agent import run_purchase_agent
 from ..core.config import get_settings
 from ..core.errors import InvalidSignatureError, TimestampTooOldError, DuplicateEventError
 from ..core.logging import get_logger
@@ -113,6 +114,7 @@ def check_idempotency(event_id: str) -> None:
 async def handle_webhook(
     request: Request,
     payload: WebhookPayload,
+    background_tasks: BackgroundTasks,
     x_timestamp: str = Header(..., alias="X-Timestamp"),
     x_signature: str = Header(..., alias="X-Signature"),
 ):
@@ -156,9 +158,20 @@ async def handle_webhook(
             product_hint=payload.product_hint,
             direct_link=payload.direct_link
         )
-        
-        # TODO: Trigger agent execution here
-        # For now, just return success
+
+        # Trigger agent execution in background
+        background_tasks.add_task(
+            run_purchase_agent,
+            direct_link=payload.direct_link,
+            product_name=payload.product_hint,
+            event_id=payload.event_id
+        )
+
+        logger.info(
+            "Agent execution queued",
+            event_id=payload.event_id
+        )
+
         return {
             "status": "accepted",
             "event_id": payload.event_id,

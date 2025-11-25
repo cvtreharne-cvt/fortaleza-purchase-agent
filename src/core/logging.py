@@ -2,6 +2,7 @@
 
 import logging
 import sys
+from pathlib import Path
 from typing import Any, Dict
 
 import structlog
@@ -13,24 +14,34 @@ from .config import get_settings
 def setup_logging() -> None:
     """Configure structured logging with JSON support for cloud environments."""
     settings = get_settings()
-    
+
     # Set log level
     log_level = getattr(logging, settings.log_level.upper(), logging.INFO)
-    
+
+    # Create logs directory if it doesn't exist
+    logs_dir = Path("logs")
+    logs_dir.mkdir(exist_ok=True)
+
     if settings.json_logs:
         # JSON logging for cloud environments
-        handler = logging.StreamHandler(sys.stdout)
+        # Console handler
+        console_handler = logging.StreamHandler(sys.stdout)
         formatter = jsonlogger.JsonFormatter(
             fmt="%(asctime)s %(name)s %(levelname)s %(message)s",
             datefmt="%Y-%m-%dT%H:%M:%S"
         )
-        handler.setFormatter(formatter)
-        
+        console_handler.setFormatter(formatter)
+
+        # File handler for persistent logs
+        file_handler = logging.FileHandler(logs_dir / "agent.log")
+        file_handler.setFormatter(formatter)
+
         # Configure root logger
         root_logger = logging.getLogger()
         root_logger.setLevel(log_level)
         root_logger.handlers = []
-        root_logger.addHandler(handler)
+        root_logger.addHandler(console_handler)
+        root_logger.addHandler(file_handler)
         
         # Configure structlog for JSON
         structlog.configure(
@@ -52,11 +63,26 @@ def setup_logging() -> None:
         )
     else:
         # Human-readable console logging for local development
-        logging.basicConfig(
-            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-            level=log_level,
-            stream=sys.stdout,
+        # Console handler
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_formatter = logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
         )
+        console_handler.setFormatter(console_formatter)
+
+        # File handler for persistent logs (human-readable format)
+        file_handler = logging.FileHandler(logs_dir / "agent.log")
+        file_formatter = logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+        )
+        file_handler.setFormatter(file_formatter)
+
+        # Configure root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(log_level)
+        root_logger.handlers = []
+        root_logger.addHandler(console_handler)
+        root_logger.addHandler(file_handler)
         
         structlog.configure(
             processors=[

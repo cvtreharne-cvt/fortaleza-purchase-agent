@@ -16,6 +16,7 @@ and includes detection for 3D Secure challenges that require manual intervention
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
 from ..core.logging import get_logger
+from ..core.notify import send_notification
 from ..core.secrets import get_secret_manager
 from ..core.config import get_settings, Mode
 from ..core.errors import ThreeDSecureRequired
@@ -109,8 +110,15 @@ async def checkout_and_pay(page: Page, submit_order: bool = None) -> dict:
                 "order_summary": order_summary,
                 "current_url": page.url
             }
-        
-    except ThreeDSecureRequired:
+
+    except ThreeDSecureRequired as e:
+        # Send emergency notification immediately
+        logger.error("3D Secure required - sending emergency notification")
+        send_notification(
+            "🚨 3D Secure Required",
+            "3D Secure authentication is required for payment. Please complete manually.",
+            priority=2  # Emergency - requires acknowledgment
+        )
         raise
     except Exception as e:
         logger.error("Checkout failed", error=str(e))

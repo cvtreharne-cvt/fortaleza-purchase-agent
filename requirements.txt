@@ -1,4 +1,5 @@
 # Google ADK and AI
+google-adk>=1.19.0
 google-genai>=0.2.0
 google-cloud-aiplatform>=1.60.0
 google-cloud-secret-manager>=2.20.0
@@ -23,7 +24,7 @@ tenacity>=8.2.3
 # Security
 cryptography>=42.0.0
 
-# Logging
+# Logging and Observability
 structlog>=24.1.0
 python-json-logger>=2.0.7
 

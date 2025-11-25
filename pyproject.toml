@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fortaleza-purchase-agent"
+version = "0.1.0"
+description = "AI-powered agent for purchasing Fortaleza tequila from Bitters & Bottles"
+requires-python = ">=3.10"
+dependencies = [
+    # Google ADK and AI
+    "google-adk>=1.19.0",
+    "google-genai>=0.2.0",
+    "google-cloud-aiplatform>=1.60.0",
+    "google-cloud-secret-manager>=2.20.0",
+    "google-cloud-logging>=3.10.0",
+
+    # Web Framework
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "gunicorn>=21.2.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+
+    # Browser Automation
+    "playwright>=1.42.0",
+
+    # HTTP Client
+    "httpx>=0.27.0",
+
+    # Retry Logic
+    "tenacity>=8.2.3",
+
+    # Security
+    "cryptography>=42.0.0",
+
+    # Logging and Observability
+    "structlog>=24.1.0",
+    "python-json-logger>=2.0.7",
+
+    # Environment
+    "python-dotenv>=1.0.1",
+
+    # Utilities
+    "python-dateutil>=2.9.0",
+
+    # Testing
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[tool.setuptools]
+packages = ["src", "agents"]
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.txt", "*.md"]

@@ -13,6 +13,13 @@ logger = get_logger(__name__)
 
 BASE_URL = "https://www.bittersandbottles.com"
 
+# Timeout constants (in milliseconds)
+TRACKING_REDIRECT_WAIT_MS = 5000  # Wait for trk.bittersandbottles.com redirects to complete
+SEARCH_BUTTON_TIMEOUT = 2000  # Timeout for finding search button/icon
+SEARCH_INPUT_TIMEOUT = 5000  # Timeout for search input field to appear
+SEARCH_SUGGESTIONS_WAIT_MS = 1000  # Wait for search suggestions dropdown to populate
+SEARCH_RESULTS_WAIT_MS = 2000  # Wait for search results page to load
+
 
 async def navigate_to_product(
     direct_link: str,
@@ -21,13 +28,19 @@ async def navigate_to_product(
     """
     Navigate to product page using direct link with search fallback.
 
+    Page Lifecycle:
+    - Creates a new page via browser.new_page()
+    - Returns page in result dict
+    - Caller MUST manage page lifecycle (close old page before assigning new one)
+    - On failure, page is closed automatically before raising NavigationError
+
     Args:
         direct_link: Direct URL to product page from email
         product_name: Product name for search fallback
 
     Returns:
         dict with status, current_url, and page object.
-        Caller is responsible for closing the page when done.
+        Caller is responsible for managing the returned page's lifecycle.
 
     Raises:
         NavigationError: If navigation fails completely
@@ -38,13 +51,20 @@ async def navigate_to_product(
 
     try:
         logger.info("Navigating to direct link", url=direct_link)
-        
+
+        # Navigate and wait for redirects to complete (tracking links may redirect multiple times)
         response = await page.goto(direct_link, wait_until="domcontentloaded")
-        
-        # Check for protocol errors (e.g., trk.bittersandbottles.com)
+
+        # Only wait for JavaScript redirects if we're on a tracking domain
+        # Direct product links don't need this wait (saves 5 seconds per navigation)
         if "trk." in page.url:
-            logger.warning("Protocol error: redirect domain detected", url=page.url)
-            raise ProtocolError(f"Protocol error: redirected to {page.url}")
+            logger.debug("On tracking domain, waiting for redirect", url=page.url)
+            await page.wait_for_timeout(TRACKING_REDIRECT_WAIT_MS)
+
+            # Check if we're still on tracking domain after wait (shouldn't happen)
+            if "trk." in page.url:
+                logger.warning("Stuck on tracking domain after redirect wait", url=page.url)
+                raise ProtocolError(f"Failed to redirect from tracking link: {page.url}")
         
         # Check for 404
         if response and response.status == 404:
@@ -66,17 +86,26 @@ async def navigate_to_product(
         }
 
     except (ProtocolError, PageNotFoundError, UnexpectedPageError, PlaywrightTimeout) as e:
+        # Require product_name for search fallback - no default
+        if not product_name:
+            logger.error("Direct link failed and no product_name provided for search fallback")
+            await page.close()
+            raise NavigationError(
+                f"Direct link failed and no product name specified for search fallback. "
+                f"Direct link error: {str(e)}"
+            )
+
         logger.warning(
             "Direct link failed, trying search fallback",
             error=str(e),
-            product_name=product_name or settings.product_name
+            product_name=product_name
         )
 
         # Fallback to homepage + search
         try:
             search_result = await _search_for_product(
                 page,
-                product_name or settings.product_name
+                product_name
             )
             return search_result
         except Exception as search_error:
@@ -100,29 +129,24 @@ async def _verify_product_page(page: Page) -> bool:
         True if on product page, False otherwise
     """
     try:
-        # Check for product page indicators
-        # Must have: Product title
-        # Must have at least one: Add to cart button, Notify button, or Sold Out text
+        # Simple check: URL contains '/products/' and we're not on a collection/search page
+        url = page.url
+        if '/products/' in url and '/search' not in url and '/collections' not in url:
+            logger.debug("URL indicates product page", url=url)
 
-        # First verify title exists
-        await page.wait_for_selector(
-            "h1.product-title, .product__title, [data-product-title]",
-            timeout=5000
-        )
+            # Check for essential product page indicators
+            has_price = await page.query_selector(".price, [data-price], .product-price") is not None
+            has_add_to_cart = await page.query_selector("button[name='add'], .add-to-cart, [data-add-to-cart]") is not None
 
-        # Check for product action indicators (not just price)
-        add_to_cart = await page.query_selector(
-            "button[name='add'], .product-form__submit, [data-add-to-cart]"
-        )
-        notify_me = await page.query_selector("text=/notify me when available/i")
-        sold_out = await page.query_selector("text=/sold out/i")
+            # If we have price or add to cart button, it's a product page
+            if has_price or has_add_to_cart:
+                logger.debug("Product page verified", has_price=has_price, has_add_to_cart=has_add_to_cart)
+                return True
 
-        # Require title AND at least one product action indicator
-        has_action_indicator = (add_to_cart is not None) or (notify_me is not None) or (sold_out is not None)
+        return False
 
-        return has_action_indicator
-
-    except PlaywrightTimeout:
+    except Exception as e:
+        logger.warning("Error verifying product page", error=str(e))
         return False
 
 
@@ -175,7 +199,7 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
         search_button = None
         for selector in search_selectors:
             try:
-                search_button = await page.wait_for_selector(selector, timeout=2000)
+                search_button = await page.wait_for_selector(selector, timeout=SEARCH_BUTTON_TIMEOUT)
                 if search_button:
                     logger.debug("Found search button", selector=selector)
                     break
@@ -201,14 +225,14 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
         # Wait for search input to appear
         search_input = await page.wait_for_selector(
             "input[type='search'], input[name='q'], .search__input, input[placeholder*='Search' i]",
-            timeout=5000
+            timeout=SEARCH_INPUT_TIMEOUT
         )
         
         # Type product name to show search suggestions
         await search_input.fill(product_name)
-        
-        # Wait for search suggestions dropdown to appear
-        await page.wait_for_timeout(1000)
+
+        # Wait for search suggestions dropdown to populate
+        await page.wait_for_timeout(SEARCH_SUGGESTIONS_WAIT_MS)
         
         # Look for product in the suggestions dropdown (under "Products" section)
         # Note: Suggestions contain both search queries (/search?q=) and products (/products/)
@@ -232,19 +256,30 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
             logger.info("Product not in suggestions, trying full search results")
             await search_input.press("Enter")
             await page.wait_for_load_state("domcontentloaded")
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(SEARCH_RESULTS_WAIT_MS)
             
             # Try to find in search results
+            # Be more flexible with matching - split product name into key words
+            # For "Hamilton Grass Skirt Blend Rum", try matching on "hamilton" and "grass"
+            name_parts = product_name_lower.split('-')
+
             result_selectors = [
-                f"a[href*='{product_name_lower}'][href*='products']",
-                f".productitem a[href*='{product_name_lower}']",
+                f"a[href*='{product_name_lower}'][href*='products']",  # Exact match
+                f".productitem a[href*='{product_name_lower}']",       # Product item with exact
+                f"a[href*='products'][href*='{name_parts[0]}']",       # First word (e.g., "hamilton")
+                ".product-item a[href*='products']",                    # Any product link
+                "a.product-link[href*='products']",                     # Product link class
             ]
-            
+
             for selector in result_selectors:
-                product_link = await page.query_selector(selector)
-                if product_link:
-                    logger.debug("Found product link in results", selector=selector)
-                    break
+                try:
+                    product_link = await page.query_selector(selector)
+                    if product_link:
+                        href = await product_link.get_attribute('href')
+                        logger.debug("Found product link in results", selector=selector, href=href)
+                        break
+                except Exception:
+                    continue
         
         if not product_link:
             raise NavigationError(f"Product '{product_name}' not found in search suggestions or results")

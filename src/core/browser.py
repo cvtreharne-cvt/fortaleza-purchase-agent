@@ -1,6 +1,7 @@
 """Playwright browser harness for managing browser lifecycle."""
 
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -21,7 +22,8 @@ class BrowserManager:
         self.playwright: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
-        self._start_lock = asyncio.Lock()
+        self.page: Optional[Page] = None
+        self._start_lock = asyncio.Lock()  # Async lock to prevent concurrent start() calls
         
     async def start(self) -> None:
         """Start Playwright and launch browser."""
@@ -35,9 +37,10 @@ class BrowserManager:
             # Start Playwright
             self.playwright = await async_playwright().start()
 
-            # Launch Chromium
+            # Launch Chromium with extended timeout for Cloud Run cold starts
             self.browser = await self.playwright.chromium.launch(
                 headless=self.settings.headless,
+                timeout=self.settings.browser_launch_timeout,
                 args=[
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -57,6 +60,9 @@ class BrowserManager:
             # Set default timeouts
             self.context.set_default_timeout(self.settings.browser_timeout)
             self.context.set_default_navigation_timeout(self.settings.navigation_timeout)
+
+            # Create initial page for agent tools to use
+            self.page = await self.context.new_page()
 
             logger.info("Browser started successfully")
     
@@ -113,15 +119,29 @@ class BrowserManager:
         return pages[0] if pages else None
 
 
-# Global instance
+# Global instance with thread safety
 _browser_manager: Optional[BrowserManager] = None
+_browser_lock = threading.Lock()
 
 
 def get_browser_manager() -> BrowserManager:
-    """Get or create the global BrowserManager instance."""
+    """
+    Get or create the global BrowserManager instance (thread-safe).
+
+    Uses double-checked locking pattern to ensure thread-safe singleton creation.
+    This is necessary for multi-threaded ASGI servers (gunicorn with multiple threads).
+
+    Note: With gunicorn --workers 1, each worker process has its own singleton.
+    """
     global _browser_manager
+
+    # First check (no lock) - fast path for already-initialized case
     if _browser_manager is None:
-        _browser_manager = BrowserManager()
+        with _browser_lock:
+            # Second check (with lock) - ensure only one thread creates the instance
+            if _browser_manager is None:
+                _browser_manager = BrowserManager()
+
     return _browser_manager
 
 

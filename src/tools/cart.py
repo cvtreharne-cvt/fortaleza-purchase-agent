@@ -3,6 +3,7 @@
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
 from ..core.logging import get_logger
+from ..core.notify import send_notification
 from ..core.errors import ProductSoldOutError
 
 logger = get_logger(__name__)
@@ -17,33 +18,45 @@ SUCCESS_INDICATOR_TIMEOUT = 2000  # Timeout for success indicators
 async def add_to_cart(page: Page, proceed_to_checkout: bool = False) -> dict:
     """
     Add product to shopping cart.
-    
+
     This function:
-    - Checks if product is in stock
-    - Clicks "Add to Cart" button
+    - Clicks "Add to Cart" button (if disabled/missing, returns error)
     - Waits for cart drawer to appear
     - Verifies product was added
     - Optionally clicks "CHECKOUT" in the drawer
-    
+
     Args:
         page: Playwright page (should be on product page)
         proceed_to_checkout: If True, clicks CHECKOUT button in drawer
-        
+
     Returns:
         dict with status and message
-        
+
     Raises:
-        ProductSoldOutError: If product is sold out
+        ProductSoldOutError: If product is sold out (button disabled/shows NOTIFY ME)
         Exception: For other failures
     """
     logger.info("Adding product to cart", proceed_to_checkout=proceed_to_checkout)
-    
+
     try:
-        # First check if product is sold out
-        if await _is_sold_out(page):
-            raise ProductSoldOutError("Product is sold out - cannot add to cart")
-        
         # Find and click "Add to Cart" button
+        # First check if product shows NOTIFY ME button (completely sold out)
+        notify_me_selectors = [
+            "button:has-text('NOTIFY ME WHEN AVAILABLE')",
+            "button:has-text('NOTIFY ME')",
+            "button:has-text('Notify me')",
+        ]
+
+        for selector in notify_me_selectors:
+            try:
+                notify_button = await page.wait_for_selector(selector, timeout=SOLD_OUT_CHECK_TIMEOUT)
+                if notify_button:
+                    logger.info("Product shows NOTIFY ME button - sold out at all locations")
+                    raise ProductSoldOutError("Product is sold out at all locations - NOTIFY ME button present")
+            except PlaywrightTimeout:
+                continue
+
+        # Look for ADD TO CART button
         add_to_cart_selectors = [
             "button:has-text('ADD TO CART')",
             "button:has-text('Add to Cart')",
@@ -53,7 +66,7 @@ async def add_to_cart(page: Page, proceed_to_checkout: bool = False) -> dict:
             "[data-action='add-to-cart']",
             "input[type='submit'][value*='Add']",
         ]
-        
+
         add_button = None
         for selector in add_to_cart_selectors:
             try:
@@ -62,16 +75,17 @@ async def add_to_cart(page: Page, proceed_to_checkout: bool = False) -> dict:
                     # Check if button is disabled
                     is_disabled = await add_button.is_disabled()
                     if not is_disabled:
-                        logger.debug("Found add to cart button", selector=selector)
+                        logger.debug("Found enabled add to cart button", selector=selector)
                         break
                     else:
-                        logger.debug("Button found but disabled", selector=selector)
+                        logger.debug("Button found but disabled - product may be sold out", selector=selector)
                         add_button = None
             except PlaywrightTimeout:
                 continue
-        
+
         if not add_button:
-            raise Exception("Could not find enabled 'Add to Cart' button")
+            logger.error("Could not find enabled 'Add to Cart' button")
+            raise ProductSoldOutError("Product cannot be added to cart - button missing or disabled")
         
         logger.info("Clicking 'Add to Cart' button")
         await add_button.click()
@@ -133,43 +147,19 @@ async def add_to_cart(page: Page, proceed_to_checkout: bool = False) -> dict:
             "message": "Product added to cart",
             "current_url": page.url
         }
-        
-    except ProductSoldOutError:
+
+    except ProductSoldOutError as e:
+        # Send emergency notification immediately
+        logger.error("Product sold out - sending emergency notification")
+        send_notification(
+            "⚠️ Product Sold Out",
+            f"Product is sold out and cannot be added to cart. Reason: {str(e)}",
+            priority=2  # Emergency - requires acknowledgment
+        )
         raise
     except Exception as e:
         logger.error("Failed to add product to cart", error=str(e))
         raise
-
-
-async def _is_sold_out(page: Page) -> bool:
-    """
-    Check if product is sold out.
-    
-    Args:
-        page: Playwright page
-        
-    Returns:
-        True if sold out, False otherwise
-    """
-    sold_out_selectors = [
-        "text=/sold out/i",
-        "text=/out of stock/i",
-        "text=/notify me when available/i",
-        ".sold-out",
-        "[data-sold-out='true']",
-        "button:has-text('NOTIFY ME')",
-    ]
-    
-    for selector in sold_out_selectors:
-        try:
-            element = await page.wait_for_selector(selector, timeout=SOLD_OUT_CHECK_TIMEOUT)
-            if element:
-                logger.debug("Found sold out indicator", selector=selector)
-                return True
-        except PlaywrightTimeout:
-            continue
-
-    return False
 
 
 async def _verify_item_added(page: Page) -> bool:
