@@ -107,7 +107,37 @@ def create_adk_tools(product_name: str = ""):
         Note: This function manages page lifecycle by closing the old page before
         assigning the new one to prevent memory leaks. The new page becomes the
         active browser.page for subsequent operations.
+
+        Args:
+            url: URL to navigate to (must be a valid HTTP/HTTPS URL)
         """
+        # Input validation: Check URL format
+        if not url or not isinstance(url, str):
+            return {
+                "status": "error",
+                "message": "URL must be a non-empty string"
+            }
+
+        # Basic URL validation
+        from urllib.parse import urlparse
+        try:
+            parsed = urlparse(url)
+            if not all([parsed.scheme, parsed.netloc]):
+                return {
+                    "status": "error",
+                    "message": f"Invalid URL format: {url}. Must include scheme (http/https) and domain."
+                }
+            if parsed.scheme not in ['http', 'https']:
+                return {
+                    "status": "error",
+                    "message": f"Invalid URL scheme: {parsed.scheme}. Only http and https are supported."
+                }
+        except Exception as e:
+            return {
+                "status": "error",
+                "message": f"Invalid URL: {str(e)}"
+            }
+
         try:
             browser = await ensure_browser_started()
             # Pass product_name for search fallback if direct link fails

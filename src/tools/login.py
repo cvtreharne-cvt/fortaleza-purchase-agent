@@ -16,6 +16,7 @@ BASE_URL = "https://www.bittersandbottles.com"
 SELECTOR_WAIT_TIMEOUT = 3000  # Standard timeout for element selectors
 TWO_FACTOR_CHECK_TIMEOUT = 1000  # Quick timeout for 2FA indicators
 ERROR_CHECK_TIMEOUT = 1000  # Quick timeout for error messages
+CAPTCHA_CHECK_TIMEOUT = 1000  # Quick timeout for CAPTCHA detection
 
 
 async def login_to_account(page: Page) -> dict:
@@ -331,8 +332,8 @@ async def _check_for_captcha(page: Page) -> bool:
 
     for selector in captcha_selectors:
         try:
-            # Use shorter timeout for CAPTCHA check (1 second)
-            element = await page.wait_for_selector(selector, timeout=1000)
+            # Use shorter timeout for CAPTCHA check
+            element = await page.wait_for_selector(selector, timeout=CAPTCHA_CHECK_TIMEOUT)
             if element:
                 # Additional check: ensure element is visible
                 if await element.is_visible():
