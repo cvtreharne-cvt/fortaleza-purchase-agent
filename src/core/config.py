@@ -10,6 +10,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .errors import ConfigurationError
 
 
+# Timeout constants (in milliseconds)
+NAVIGATION_TIMEOUT_DEFAULT = 30000  # 30 seconds for local development
+NAVIGATION_TIMEOUT_CLOUD_RUN = 120000  # 2 minutes for slow Cloud Run cold starts
+
+
 class Mode(str, Enum):
     """Operating mode for the agent."""
     DRYRUN = "dryrun"
@@ -39,7 +44,7 @@ class Settings(BaseSettings):
     headless: bool = Field(default=True, description="Run browser in headless mode")
     browser_launch_timeout: int = Field(default=300000, description="Browser launch timeout in milliseconds (5 minutes for Cloud Run cold starts)")
     browser_timeout: int = Field(default=60000, description="Browser timeout in milliseconds")
-    navigation_timeout: int = Field(default=120000, description="Navigation timeout in milliseconds (2 minutes for slow Cloud Run responses)")
+    navigation_timeout: int = Field(default=NAVIGATION_TIMEOUT_DEFAULT, description="Navigation timeout in milliseconds (30s default, set to 120000 for Cloud Run)")
     
     # Retry Configuration
     max_retries: int = Field(default=3, description="Maximum retry attempts")

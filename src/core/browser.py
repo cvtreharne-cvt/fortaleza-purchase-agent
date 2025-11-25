@@ -1,6 +1,7 @@
 """Playwright browser harness for managing browser lifecycle."""
 
 import asyncio
+import threading
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -118,15 +119,29 @@ class BrowserManager:
         return pages[0] if pages else None
 
 
-# Global instance
+# Global instance with thread safety
 _browser_manager: Optional[BrowserManager] = None
+_browser_lock = threading.Lock()
 
 
 def get_browser_manager() -> BrowserManager:
-    """Get or create the global BrowserManager instance."""
+    """
+    Get or create the global BrowserManager instance (thread-safe).
+
+    Uses double-checked locking pattern to ensure thread-safe singleton creation.
+    This is necessary for multi-threaded ASGI servers (gunicorn with multiple threads).
+
+    Note: With gunicorn --workers 1, each worker process has its own singleton.
+    """
     global _browser_manager
+
+    # First check (no lock) - fast path for already-initialized case
     if _browser_manager is None:
-        _browser_manager = BrowserManager()
+        with _browser_lock:
+            # Second check (with lock) - ensure only one thread creates the instance
+            if _browser_manager is None:
+                _browser_manager = BrowserManager()
+
     return _browser_manager
 
 

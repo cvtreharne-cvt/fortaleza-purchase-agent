@@ -10,9 +10,17 @@ from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
 from google.adk.tools import FunctionTool
+from playwright.async_api import TimeoutError as PlaywrightTimeout, Error as PlaywrightError
 
 from src.core.browser import managed_browser, get_browser_manager
 from src.core.config import get_settings, Mode
+from src.core.errors import (
+    NavigationError,
+    TwoFactorRequired,
+    CaptchaRequired,
+    ProductSoldOutError,
+    ThreeDSecureRequired,
+)
 from src.core.logging import get_logger
 from src.core.notify import send_notification
 from src.tools.navigate import navigate_to_product
@@ -21,6 +29,8 @@ from src.tools.cart import add_to_cart
 from src.tools.checkout import checkout_and_pay
 
 logger = get_logger(__name__)
+
+DEFAULT_AGENT_MODEL = "gemini-2.5-flash-lite"
 
 # Agent system instructions - guides the agent's reasoning
 # This is aligned with course concepts: clear instructions, tool usage strategy
@@ -91,7 +101,13 @@ def create_adk_tools(product_name: str = ""):
     """
 
     async def navigate_to_url(url: str) -> dict:
-        """Navigate browser to a specific URL. Returns success/failure and current URL."""
+        """
+        Navigate browser to a specific URL. Returns success/failure and current URL.
+
+        Note: This function manages page lifecycle by closing the old page before
+        assigning the new one to prevent memory leaks. The new page becomes the
+        active browser.page for subsequent operations.
+        """
         try:
             browser = await ensure_browser_started()
             # Pass product_name for search fallback if direct link fails
@@ -99,17 +115,28 @@ def create_adk_tools(product_name: str = ""):
                 direct_link=url,
                 product_name=product_name,  # Use product_name from closure for fallback
             )
+            # Close old page before assigning new one to prevent memory leak
+            if browser.page:
+                await browser.page.close()
             browser.page = result["page"]
             return {
                 "status": result["status"],
                 "current_url": result["current_url"],
                 "message": result.get("message", "Navigation successful")
             }
-        except Exception as e:
-            logger.error("Navigate to URL failed", error=str(e))
+        except (NavigationError, PlaywrightTimeout, PlaywrightError) as e:
+            # Expected navigation errors - log and return error dict for agent to handle
+            logger.error("Navigate to URL failed (expected error)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
+            }
+        except Exception as e:
+            # Unexpected errors - log with full traceback for debugging
+            logger.exception("Navigate to URL failed (unexpected error)")
+            return {
+                "status": "error",
+                "message": f"Unexpected error: {str(e)}"
             }
 
     async def search_for_product(product_name: str) -> dict:
@@ -125,11 +152,19 @@ def create_adk_tools(product_name: str = ""):
                 "current_url": result["current_url"],
                 "message": f"Found and navigated to {product_name}"
             }
-        except Exception as e:
-            logger.error("Search failed", error=str(e))
+        except (NavigationError, PlaywrightTimeout, PlaywrightError) as e:
+            # Expected navigation/search errors - log and return error dict for agent to handle
+            logger.error("Search failed (expected error)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
+            }
+        except Exception as e:
+            # Unexpected errors - log with full traceback for debugging
+            logger.exception("Search failed (unexpected error)")
+            return {
+                "status": "error",
+                "message": f"Unexpected error: {str(e)}"
             }
 
     async def verify_age_tool() -> dict:
@@ -154,11 +189,26 @@ def create_adk_tools(product_name: str = ""):
             page = browser.page
             result = await login_to_account(page)
             return result
-        except Exception as e:
-            logger.error("Login failed", error=str(e))
+        except (TwoFactorRequired, CaptchaRequired) as e:
+            # Expected auth errors - already auto-notified by underlying function
+            logger.error("Login failed (auth required)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
+            }
+        except (PlaywrightTimeout, PlaywrightError) as e:
+            # Expected Playwright errors - log and return error dict for agent to handle
+            logger.error("Login failed (playwright error)", error=str(e), error_type=type(e).__name__)
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+        except Exception as e:
+            # Unexpected errors - log with full traceback for debugging
+            logger.exception("Login failed (unexpected error)")
+            return {
+                "status": "error",
+                "message": f"Unexpected error: {str(e)}"
             }
 
     async def cart_tool() -> dict:
@@ -168,11 +218,26 @@ def create_adk_tools(product_name: str = ""):
             page = browser.page
             result = await add_to_cart(page, proceed_to_checkout=True)
             return result
-        except Exception as e:
-            logger.error("Add to cart failed", error=str(e))
+        except ProductSoldOutError as e:
+            # Expected sold out error - already auto-notified by underlying function
+            logger.error("Add to cart failed (sold out)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
+            }
+        except (PlaywrightTimeout, PlaywrightError) as e:
+            # Expected Playwright errors - log and return error dict for agent to handle
+            logger.error("Add to cart failed (playwright error)", error=str(e), error_type=type(e).__name__)
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+        except Exception as e:
+            # Unexpected errors - log with full traceback for debugging
+            logger.exception("Add to cart failed (unexpected error)")
+            return {
+                "status": "error",
+                "message": f"Unexpected error: {str(e)}"
             }
 
     async def checkout_tool() -> dict:
@@ -183,11 +248,26 @@ def create_adk_tools(product_name: str = ""):
             # Let mode determine if we submit
             result = await checkout_and_pay(page, submit_order=None)
             return result
-        except Exception as e:
-            logger.error("Checkout failed", error=str(e))
+        except ThreeDSecureRequired as e:
+            # Expected 3DS error - already auto-notified by underlying function
+            logger.error("Checkout failed (3DS required)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
+            }
+        except (PlaywrightTimeout, PlaywrightError) as e:
+            # Expected Playwright errors - log and return error dict for agent to handle
+            logger.error("Checkout failed (playwright error)", error=str(e), error_type=type(e).__name__)
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+        except Exception as e:
+            # Unexpected errors - log with full traceback for debugging
+            logger.exception("Checkout failed (unexpected error)")
+            return {
+                "status": "error",
+                "message": f"Unexpected error: {str(e)}"
             }
 
     async def notify_human_tool(reason: str, details: str) -> dict:
@@ -442,14 +522,11 @@ Begin the purchase process now."""
 # Module-level agent instance for ADK Web UI
 # This allows the Web UI to discover and visualize the agent
 # IMPORTANT: Must be named 'root_agent' for ADK Web UI discovery
-settings = get_settings()
-os.environ['GOOGLE_API_KEY'] = settings.google_api_key
+# To run the ADK Web UI, ensure GOOGLE_API_KEY is set in the environment and run 'adk web agents/ --port=4200 --reload'
 
 root_agent = Agent(
     name="bnb_purchase_agent",
-    model=Gemini(
-        model=settings.agent_model,
-    ),
+    model=Gemini(model=os.getenv("AGENT_MODEL", DEFAULT_AGENT_MODEL)),
     description="AI agent that autonomously purchases products from Bitters & Bottles Spirit Shop.",
     instruction=SYSTEM_INSTRUCTION,
     tools=create_adk_tools(),

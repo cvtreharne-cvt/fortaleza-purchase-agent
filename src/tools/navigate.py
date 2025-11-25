@@ -13,6 +13,13 @@ logger = get_logger(__name__)
 
 BASE_URL = "https://www.bittersandbottles.com"
 
+# Timeout constants (in milliseconds)
+TRACKING_REDIRECT_WAIT_MS = 5000  # Wait for trk.bittersandbottles.com redirects to complete
+SEARCH_BUTTON_TIMEOUT = 2000  # Timeout for finding search button/icon
+SEARCH_INPUT_TIMEOUT = 5000  # Timeout for search input field to appear
+SEARCH_SUGGESTIONS_WAIT_MS = 1000  # Wait for search suggestions dropdown to populate
+SEARCH_RESULTS_WAIT_MS = 2000  # Wait for search results page to load
+
 
 async def navigate_to_product(
     direct_link: str,
@@ -21,13 +28,19 @@ async def navigate_to_product(
     """
     Navigate to product page using direct link with search fallback.
 
+    Page Lifecycle:
+    - Creates a new page via browser.new_page()
+    - Returns page in result dict
+    - Caller MUST manage page lifecycle (close old page before assigning new one)
+    - On failure, page is closed automatically before raising NavigationError
+
     Args:
         direct_link: Direct URL to product page from email
         product_name: Product name for search fallback
 
     Returns:
         dict with status, current_url, and page object.
-        Caller is responsible for closing the page when done.
+        Caller is responsible for managing the returned page's lifecycle.
 
     Raises:
         NavigationError: If navigation fails completely
@@ -42,12 +55,14 @@ async def navigate_to_product(
         # Navigate and wait for redirects to complete (tracking links may redirect multiple times)
         response = await page.goto(direct_link, wait_until="domcontentloaded")
 
-        # Wait a bit for any JavaScript redirects to complete
-        await page.wait_for_timeout(2000)
+        # Wait for any JavaScript redirects to complete
+        await page.wait_for_timeout(TRACKING_REDIRECT_WAIT_MS)
 
         # Check if we're still on a tracking domain after redirects (shouldn't happen)
-        if "trk." in page.url or page.url == direct_link:
-            logger.warning("Stuck on tracking/redirect page", url=page.url)
+        # Note: Only check for tracking domain, not if URL changed - direct product URLs
+        # won't redirect and should stay on the same URL
+        if "trk." in page.url:
+            logger.warning("Stuck on tracking domain", url=page.url)
             raise ProtocolError(f"Failed to redirect from tracking link: {page.url}")
         
         # Check for 404
@@ -183,7 +198,7 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
         search_button = None
         for selector in search_selectors:
             try:
-                search_button = await page.wait_for_selector(selector, timeout=2000)
+                search_button = await page.wait_for_selector(selector, timeout=SEARCH_BUTTON_TIMEOUT)
                 if search_button:
                     logger.debug("Found search button", selector=selector)
                     break
@@ -209,14 +224,14 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
         # Wait for search input to appear
         search_input = await page.wait_for_selector(
             "input[type='search'], input[name='q'], .search__input, input[placeholder*='Search' i]",
-            timeout=5000
+            timeout=SEARCH_INPUT_TIMEOUT
         )
         
         # Type product name to show search suggestions
         await search_input.fill(product_name)
-        
-        # Wait for search suggestions dropdown to appear
-        await page.wait_for_timeout(1000)
+
+        # Wait for search suggestions dropdown to populate
+        await page.wait_for_timeout(SEARCH_SUGGESTIONS_WAIT_MS)
         
         # Look for product in the suggestions dropdown (under "Products" section)
         # Note: Suggestions contain both search queries (/search?q=) and products (/products/)
@@ -240,7 +255,7 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
             logger.info("Product not in suggestions, trying full search results")
             await search_input.press("Enter")
             await page.wait_for_load_state("domcontentloaded")
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(SEARCH_RESULTS_WAIT_MS)
             
             # Try to find in search results
             # Be more flexible with matching - split product name into key words
