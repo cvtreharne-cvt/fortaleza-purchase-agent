@@ -14,19 +14,25 @@ from .webhook import router as webhook_router
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
     # Startup
+    import os
     setup_logging()
     logger = get_logger(__name__)
     settings = get_settings()
-    
+
+    # Set Google API key once at startup for google.genai client
+    # This avoids runtime os.environ mutation and ensures it's set before any agent creation
+    if settings.google_api_key:
+        os.environ['GOOGLE_API_KEY'] = settings.google_api_key
+
     logger.info(
         "Fortaleza Purchase Agent starting",
         mode=settings.mode.value,
         headless=settings.headless,
         product_name=settings.product_name
     )
-    
+
     yield
-    
+
     # Shutdown
     logger.info("Fortaleza Purchase Agent shutting down")
 

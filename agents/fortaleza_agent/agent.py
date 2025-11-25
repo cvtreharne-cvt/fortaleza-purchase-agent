@@ -30,7 +30,7 @@ from src.tools.checkout import checkout_and_pay
 
 logger = get_logger(__name__)
 
-DEFAULT_AGENT_MODEL = "gemini-2.5-flash-lite"
+AGENT_MODEL = "gemini-2.5-flash"
 
 # Agent system instructions - guides the agent's reasoning
 # This is aligned with course concepts: clear instructions, tool usage strategy
@@ -413,8 +413,8 @@ async def run_purchase_agent(
     """
     settings = get_settings()
 
-    # Set Google API key as environment variable for google.genai client
-    os.environ['GOOGLE_API_KEY'] = settings.google_api_key
+    # Note: GOOGLE_API_KEY is set once at application startup in src/app/main.py lifespan()
+    # to avoid runtime os.environ mutation and ensure thread safety
 
     logger.info(
         "Starting ADK purchase agent (course-aligned)",
@@ -519,14 +519,31 @@ Begin the purchase process now."""
         }
 
 
-# Module-level agent instance for ADK Web UI
-# This allows the Web UI to discover and visualize the agent
-# IMPORTANT: Must be named 'root_agent' for ADK Web UI discovery
-# To run the ADK Web UI, ensure GOOGLE_API_KEY is set in the environment and run 'adk web agents/ --port=4200 --reload'
+# ============================================================================
+# Module-Level Agent Instance (ADK Web UI Requirement)
+# ============================================================================
+# This module-level agent is instantiated at import time to support the ADK Web UI.
+# The Web UI requires a top-level variable named 'root_agent' for agent discovery.
+#
+# IMPORTANT NOTES:
+# 1. This initialization happens at module import time, which is acceptable because:
+#    - It's only used for ADK Web UI (development tool, not production)
+#    - Production code uses run_agent() which creates agents dynamically
+#    - GOOGLE_API_KEY must be set in environment before importing this module
+#
+# 2. For ADK Web UI usage:
+#    - Ensure GOOGLE_API_KEY is exported in your shell before running
+#    - Run: adk web agents/ --port=4200 --reload
+#
+# 3. For production (FastAPI webhook):
+#    - This root_agent is not used
+#    - run_agent() creates agents with proper lifecycle management
+#    - GOOGLE_API_KEY is set once at application startup in lifespan()
+# ============================================================================
 
 root_agent = Agent(
     name="bnb_purchase_agent",
-    model=Gemini(model=os.getenv("AGENT_MODEL", DEFAULT_AGENT_MODEL)),
+    model=Gemini(model=AGENT_MODEL),
     description="AI agent that autonomously purchases products from Bitters & Bottles Spirit Shop.",
     instruction=SYSTEM_INSTRUCTION,
     tools=create_adk_tools(),
