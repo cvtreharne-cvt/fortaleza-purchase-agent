@@ -468,7 +468,7 @@ async def run_purchase_agent(
             agent = Agent(
                 name="bnb_purchase_agent",
                 model=Gemini(
-                    model=settings.agent_model,
+                    model=AGENT_MODEL,
                 ),
                 description="AI agent that autonomously purchases products from Bitters & Bottles Spirit Shop.",
                 instruction=SYSTEM_INSTRUCTION,
@@ -556,25 +556,32 @@ Begin the purchase process now."""
 # The Web UI requires a top-level variable named 'root_agent' for agent discovery.
 #
 # IMPORTANT NOTES:
-# 1. This initialization happens at module import time, which is acceptable because:
+# 1. This initialization happens at module import time with environment guard:
+#    - Only created if GOOGLE_API_KEY is already set in environment
 #    - It's only used for ADK Web UI (development tool, not production)
-#    - Production code uses run_agent() which creates agents dynamically
-#    - GOOGLE_API_KEY must be set in environment before importing this module
+#    - Production code uses run_purchase_agent() which creates agents dynamically
 #
 # 2. For ADK Web UI usage:
 #    - Ensure GOOGLE_API_KEY is exported in your shell before running
-#    - Run: adk web agents/ --port=4200 --reload
+#    - Run: export GOOGLE_API_KEY=your_key && adk web agents/ --port=4200 --reload
 #
 # 3. For production (FastAPI webhook):
-#    - This root_agent is not used
-#    - run_agent() creates agents with proper lifecycle management
+#    - This root_agent will not be created (GOOGLE_API_KEY set in lifespan, after import)
+#    - run_purchase_agent() creates agents with proper lifecycle management
 #    - GOOGLE_API_KEY is set once at application startup in lifespan()
 # ============================================================================
 
-root_agent = Agent(
-    name="bnb_purchase_agent",
-    model=Gemini(model=AGENT_MODEL),
-    description="AI agent that autonomously purchases products from Bitters & Bottles Spirit Shop.",
-    instruction=SYSTEM_INSTRUCTION,
-    tools=create_adk_tools(),
-)
+# Only create root_agent if GOOGLE_API_KEY is already set (for ADK Web UI)
+# Production imports this module before setting GOOGLE_API_KEY, so root_agent won't be created
+import os
+if os.getenv("GOOGLE_API_KEY"):
+    root_agent = Agent(
+        name="bnb_purchase_agent",
+        model=Gemini(model=AGENT_MODEL),
+        description="AI agent that autonomously purchases products from Bitters & Bottles Spirit Shop.",
+        instruction=SYSTEM_INSTRUCTION,
+        tools=create_adk_tools(),
+    )
+else:
+    # For production: root_agent not needed (run_purchase_agent() is used instead)
+    root_agent = None  # type: ignore

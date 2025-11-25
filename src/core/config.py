@@ -77,7 +77,6 @@ class Settings(BaseSettings):
     
     # Google Gemini API Key (for ADK)
     google_api_key: Optional[str] = Field(default=None, description="Google Gemini API key")
-    agent_model: str = Field(default="gemini-2.5-flash-lite", description="Google Gemini model for agent")
 
     # Webhook Configuration
     webhook_timestamp_tolerance: int = Field(default=300, description="Webhook timestamp tolerance in seconds")

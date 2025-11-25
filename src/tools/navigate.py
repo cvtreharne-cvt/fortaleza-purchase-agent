@@ -55,15 +55,16 @@ async def navigate_to_product(
         # Navigate and wait for redirects to complete (tracking links may redirect multiple times)
         response = await page.goto(direct_link, wait_until="domcontentloaded")
 
-        # Wait for any JavaScript redirects to complete
-        await page.wait_for_timeout(TRACKING_REDIRECT_WAIT_MS)
-
-        # Check if we're still on a tracking domain after redirects (shouldn't happen)
-        # Note: Only check for tracking domain, not if URL changed - direct product URLs
-        # won't redirect and should stay on the same URL
+        # Only wait for JavaScript redirects if we're on a tracking domain
+        # Direct product links don't need this wait (saves 5 seconds per navigation)
         if "trk." in page.url:
-            logger.warning("Stuck on tracking domain", url=page.url)
-            raise ProtocolError(f"Failed to redirect from tracking link: {page.url}")
+            logger.debug("On tracking domain, waiting for redirect", url=page.url)
+            await page.wait_for_timeout(TRACKING_REDIRECT_WAIT_MS)
+
+            # Check if we're still on tracking domain after wait (shouldn't happen)
+            if "trk." in page.url:
+                logger.warning("Stuck on tracking domain after redirect wait", url=page.url)
+                raise ProtocolError(f"Failed to redirect from tracking link: {page.url}")
         
         # Check for 404
         if response and response.status == 404:

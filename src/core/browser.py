@@ -1,5 +1,6 @@
 """Playwright browser harness for managing browser lifecycle."""
 
+import asyncio
 import threading
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -22,11 +23,11 @@ class BrowserManager:
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
-        self._start_lock = threading.Lock()  # Use threading.Lock for true thread safety
+        self._start_lock = asyncio.Lock()  # Async lock to prevent concurrent start() calls
         
     async def start(self) -> None:
         """Start Playwright and launch browser."""
-        with self._start_lock:
+        async with self._start_lock:
             if self.browser:
                 logger.warning("Browser already started")
                 return
