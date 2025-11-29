@@ -159,6 +159,73 @@ class PushoverClient:
             priority=NotificationPriority.NORMAL,
         )
 
+    def send_approval_request(
+        self,
+        run_id: str,
+        order_summary: dict,
+        approve_url: str,
+        reject_url: str
+    ) -> bool:
+        """
+        Send interactive approval request notification.
+
+        Args:
+            run_id: Unique identifier for the agent run
+            order_summary: Order details for human review
+            approve_url: URL to approve the purchase
+            reject_url: URL to reject the purchase
+
+        Returns:
+            True if notification sent successfully, False otherwise
+        """
+        if not self.enabled:
+            logger.debug("Pushover notifications disabled, skipping approval request")
+            return False
+
+        product = order_summary.get("product", "Unknown")
+        subtotal = order_summary.get("subtotal", "Unknown")
+        tax = order_summary.get("tax", "Unknown")
+        total = order_summary.get("total", "Unknown")
+        pickup = order_summary.get("pickup_location", "Unknown")
+
+        message = f"""🛒 PURCHASE APPROVAL REQUIRED
+
+Product: {product}
+Subtotal: {subtotal}
+Tax: {tax}
+Total: {total}
+Pickup: {pickup}
+
+Tap the "Approve" button below to confirm purchase.
+To reject, tap this notification for the reject URL.
+
+Run ID: {run_id}"""
+
+        payload = {
+            "token": self.app_token,
+            "user": self.user_key,
+            "message": message,
+            "title": "🛒 Approve Purchase?",
+            "priority": NotificationPriority.HIGH.value,
+            "url": approve_url,
+            "url_title": "✅ APPROVE",
+            "sound": "pushover",
+        }
+
+        # Add supplementary URL for reject (Pushover supports one action button + URL in message)
+        # Users can tap notification to see full message with reject URL
+        message += f"\n\nReject URL: {reject_url}"
+        payload["message"] = message
+
+        try:
+            response = httpx.post(self.PUSHOVER_API_URL, data=payload, timeout=10.0)
+            response.raise_for_status()
+            logger.info("Approval request notification sent", run_id=run_id, total=total)
+            return True
+        except Exception as e:
+            logger.error("Failed to send approval request notification", error=str(e), run_id=run_id)
+            return False
+
 
 # Global instance
 _pushover_client: Optional[PushoverClient] = None
