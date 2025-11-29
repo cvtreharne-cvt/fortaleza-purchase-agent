@@ -192,3 +192,97 @@ async def handle_webhook(
             event_id=payload.event_id
         )
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/approval/{run_id}/approve")
+async def approve_purchase(run_id: str):
+    """
+    Handle purchase approval callback from Pushover.
+
+    Args:
+        run_id: Unique identifier for the agent run
+
+    Returns:
+        Approval status and details
+    """
+    from ..core.approval import approve_request, get_approval_status
+
+    success = approve_request(run_id)
+
+    if not success:
+        approval = get_approval_status(run_id)
+        if not approval:
+            logger.warning("Approval attempt for unknown run_id", run_id=run_id)
+            raise HTTPException(status_code=404, detail=f"Approval request {run_id} not found")
+        else:
+            logger.warning("Approval attempt failed", run_id=run_id, reason="expired or already decided")
+            raise HTTPException(status_code=400, detail="Approval request expired or already decided")
+
+    logger.info("Purchase approved via callback", run_id=run_id)
+
+    return {
+        "status": "approved",
+        "run_id": run_id,
+        "message": "Purchase approved successfully"
+    }
+
+
+@router.post("/approval/{run_id}/reject")
+async def reject_purchase(run_id: str):
+    """
+    Handle purchase rejection callback from Pushover.
+
+    Args:
+        run_id: Unique identifier for the agent run
+
+    Returns:
+        Rejection status and details
+    """
+    from ..core.approval import reject_request, get_approval_status
+
+    success = reject_request(run_id)
+
+    if not success:
+        approval = get_approval_status(run_id)
+        if not approval:
+            logger.warning("Rejection attempt for unknown run_id", run_id=run_id)
+            raise HTTPException(status_code=404, detail=f"Approval request {run_id} not found")
+        else:
+            logger.warning("Rejection attempt failed", run_id=run_id, reason="expired or already decided")
+            raise HTTPException(status_code=400, detail="Approval request expired or already decided")
+
+    logger.info("Purchase rejected via callback", run_id=run_id)
+
+    return {
+        "status": "rejected",
+        "run_id": run_id,
+        "message": "Purchase rejected successfully"
+    }
+
+
+@router.get("/approval/{run_id}/status")
+async def get_approval_status_endpoint(run_id: str):
+    """
+    Get current status of an approval request.
+
+    Args:
+        run_id: Unique identifier for the agent run
+
+    Returns:
+        Current approval status
+    """
+    from ..core.approval import get_approval_status
+
+    approval = get_approval_status(run_id)
+
+    if not approval:
+        raise HTTPException(status_code=404, detail=f"Approval request {run_id} not found")
+
+    return {
+        "run_id": run_id,
+        "status": approval["status"],
+        "decision": approval["decision"],
+        "created_at": approval["created_at"].isoformat(),
+        "expires_at": approval["expires_at"].isoformat(),
+        "decided_at": approval["decided_at"].isoformat() if approval["decided_at"] else None
+    }
