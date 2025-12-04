@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     browser_launch_timeout: int = Field(default=300000, description="Browser launch timeout in milliseconds (5 minutes for Cloud Run cold starts)")
     browser_timeout: int = Field(default=60000, description="Browser timeout in milliseconds")
     navigation_timeout: int = Field(default=NAVIGATION_TIMEOUT_DEFAULT, description="Navigation timeout in milliseconds (30s default, set to 120000 for Cloud Run)")
+    browser_worker_url: Optional[str] = Field(default=None, description="Browser worker base URL (enables Node Playwright worker)")
+    browser_worker_timeout: int = Field(default=60.0, description="HTTP timeout (seconds) for browser worker requests")
     
     # Retry Configuration
     max_retries: int = Field(default=3, description="Maximum retry attempts")

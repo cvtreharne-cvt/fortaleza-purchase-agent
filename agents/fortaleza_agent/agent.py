@@ -12,6 +12,7 @@ from google.adk.runners import InMemoryRunner
 from google.adk.tools import FunctionTool
 from playwright.async_api import TimeoutError as PlaywrightTimeout, Error as PlaywrightError
 
+from src.core import browser_service
 from src.core.browser import managed_browser, get_browser_manager
 from src.core.config import get_settings, Mode
 from src.core.errors import (
@@ -99,6 +100,7 @@ def create_adk_tools(product_name: str = ""):
     Args:
         product_name: Product name for search fallback if direct link fails
     """
+    use_worker = browser_service.is_enabled()
 
     async def navigate_to_url(url: str) -> dict:
         """
@@ -139,11 +141,21 @@ def create_adk_tools(product_name: str = ""):
             }
 
         try:
+            if use_worker:
+                result = await navigate_to_product(
+                    direct_link=url,
+                    product_name=product_name,  # fallback still available
+                )
+                return {
+                    "status": result["status"],
+                    "current_url": result.get("current_url"),
+                    "message": result.get("message", "Navigation successful")
+                }
+
             browser = await ensure_browser_started()
-            # Pass product_name for search fallback if direct link fails
             result = await navigate_to_product(
                 direct_link=url,
-                product_name=product_name,  # Use product_name from closure for fallback
+                product_name=product_name,
             )
             # Close old page before assigning new one to prevent memory leak
             if browser.page:
@@ -155,14 +167,12 @@ def create_adk_tools(product_name: str = ""):
                 "message": result.get("message", "Navigation successful")
             }
         except (NavigationError, PlaywrightTimeout, PlaywrightError) as e:
-            # Expected navigation errors - log and return error dict for agent to handle
             logger.error("Navigate to URL failed (expected error)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
             }
         except Exception as e:
-            # Unexpected errors - log with full traceback for debugging
             logger.exception("Navigate to URL failed (unexpected error)")
             return {
                 "status": "error",
@@ -172,10 +182,18 @@ def create_adk_tools(product_name: str = ""):
     async def search_for_product(product_name: str) -> dict:
         """Search for a product by name on the website. Returns search results and navigation status."""
         try:
+            if use_worker:
+                # use worker's search path via navigate endpoint
+                result = await browser_service.navigate(None, product_name, None)
+                return {
+                    "status": result.get("status"),
+                    "current_url": result.get("current_url"),
+                    "message": result.get("message", f"Found and navigated to {product_name}")
+                }
+
             from src.tools.navigate import _search_for_product
             browser = await ensure_browser_started()
             page = browser.page
-            # Call the search function directly
             result = await _search_for_product(page, product_name)
             return {
                 "status": result["status"],
@@ -183,14 +201,12 @@ def create_adk_tools(product_name: str = ""):
                 "message": f"Found and navigated to {product_name}"
             }
         except (NavigationError, PlaywrightTimeout, PlaywrightError) as e:
-            # Expected navigation/search errors - log and return error dict for agent to handle
             logger.error("Search failed (expected error)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
             }
         except Exception as e:
-            # Unexpected errors - log with full traceback for debugging
             logger.exception("Search failed (unexpected error)")
             return {
                 "status": "error",
@@ -201,9 +217,12 @@ def create_adk_tools(product_name: str = ""):
         """Handle age verification modal if it appears. Call this whenever you encounter age verification prompts."""
         try:
             from src.tools.verify_age import verify_age
-            browser = await ensure_browser_started()
-            page = browser.page
-            result = await verify_age(page)
+            if use_worker:
+                result = await verify_age(None)  # type: ignore[arg-type]
+            else:
+                browser = await ensure_browser_started()
+                page = browser.page
+                result = await verify_age(page)
             return result
         except Exception as e:
             logger.error("Age verification failed", error=str(e))
@@ -215,26 +234,26 @@ def create_adk_tools(product_name: str = ""):
     async def login_tool() -> dict:
         """Login to Bitters & Bottles account. Automatically checks if already logged in."""
         try:
-            browser = await ensure_browser_started()
-            page = browser.page
-            result = await login_to_account(page)
+            if use_worker:
+                result = await login_to_account(None)  # type: ignore[arg-type]
+            else:
+                browser = await ensure_browser_started()
+                page = browser.page
+                result = await login_to_account(page)
             return result
         except (TwoFactorRequired, CaptchaRequired) as e:
-            # Expected auth errors - already auto-notified by underlying function
             logger.error("Login failed (auth required)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
             }
         except (PlaywrightTimeout, PlaywrightError) as e:
-            # Expected Playwright errors - log and return error dict for agent to handle
             logger.error("Login failed (playwright error)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
             }
         except Exception as e:
-            # Unexpected errors - log with full traceback for debugging
             logger.exception("Login failed (unexpected error)")
             return {
                 "status": "error",
@@ -244,26 +263,26 @@ def create_adk_tools(product_name: str = ""):
     async def cart_tool() -> dict:
         """Add current product to shopping cart and proceed to checkout."""
         try:
-            browser = await ensure_browser_started()
-            page = browser.page
-            result = await add_to_cart(page, proceed_to_checkout=True)
+            if use_worker:
+                result = await add_to_cart(None, proceed_to_checkout=True)  # type: ignore[arg-type]
+            else:
+                browser = await ensure_browser_started()
+                page = browser.page
+                result = await add_to_cart(page, proceed_to_checkout=True)
             return result
         except ProductSoldOutError as e:
-            # Expected sold out error - already auto-notified by underlying function
             logger.error("Add to cart failed (sold out)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
             }
         except (PlaywrightTimeout, PlaywrightError) as e:
-            # Expected Playwright errors - log and return error dict for agent to handle
             logger.error("Add to cart failed (playwright error)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
             }
         except Exception as e:
-            # Unexpected errors - log with full traceback for debugging
             logger.exception("Add to cart failed (unexpected error)")
             return {
                 "status": "error",
@@ -273,27 +292,26 @@ def create_adk_tools(product_name: str = ""):
     async def checkout_tool() -> dict:
         """Complete checkout with payment. In dryrun mode, does NOT submit. In prod mode, submits real order."""
         try:
-            browser = await ensure_browser_started()
-            page = browser.page
-            # Let mode determine if we submit
-            result = await checkout_and_pay(page, submit_order=None)
+            if use_worker:
+                result = await checkout_and_pay(None, submit_order=None)  # type: ignore[arg-type]
+            else:
+                browser = await ensure_browser_started()
+                page = browser.page
+                result = await checkout_and_pay(page, submit_order=None)
             return result
         except ThreeDSecureRequired as e:
-            # Expected 3DS error - already auto-notified by underlying function
             logger.error("Checkout failed (3DS required)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
             }
         except (PlaywrightTimeout, PlaywrightError) as e:
-            # Expected Playwright errors - log and return error dict for agent to handle
             logger.error("Checkout failed (playwright error)", error=str(e), error_type=type(e).__name__)
             return {
                 "status": "error",
                 "message": str(e)
             }
         except Exception as e:
-            # Unexpected errors - log with full traceback for debugging
             logger.exception("Checkout failed (unexpected error)")
             return {
                 "status": "error",

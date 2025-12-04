@@ -2,6 +2,7 @@
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
+from ..core import browser_service
 from ..core.logging import get_logger
 from ..core.notify import send_notification
 from ..core.secrets import get_secret_manager
@@ -41,6 +42,18 @@ async def login_to_account(page: Page) -> dict:
         Exception: For other login failures
     """
     logger.info("Starting login process")
+
+    # Browser worker path (Node Playwright)
+    if browser_service.is_enabled():
+        secret_manager = get_secret_manager()
+        dob = {
+            "dob_month": secret_manager.get_secret("dob_month"),
+            "dob_day": secret_manager.get_secret("dob_day"),
+            "dob_year": secret_manager.get_secret("dob_year"),
+        }
+        email = secret_manager.get_secret("bnb_email")
+        password = secret_manager.get_secret("bnb_password")
+        return await browser_service.login(email, password, dob)
     
     try:
         # Check if already logged in

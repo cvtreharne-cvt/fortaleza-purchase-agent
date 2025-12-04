@@ -2,6 +2,7 @@
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
+from ..core import browser_service
 from ..core.logging import get_logger
 from ..core.notify import send_notification
 from ..core.errors import ProductSoldOutError
@@ -37,6 +38,17 @@ async def add_to_cart(page: Page, proceed_to_checkout: bool = False) -> dict:
         Exception: For other failures
     """
     logger.info("Adding product to cart", proceed_to_checkout=proceed_to_checkout)
+
+    # Browser worker path (Node Playwright)
+    if browser_service.is_enabled():
+        result = await browser_service.add_to_cart(proceed_to_checkout)
+        status = result.get("status")
+        if status == "error":
+            # propagate as ProductSoldOut if indicated
+            if result.get("error_type") == "ProductSoldOut":
+                raise ProductSoldOutError(result.get("message", "Product sold out"))
+            raise Exception(result.get("message", "Add to cart failed"))
+        return result
 
     try:
         # Find and click "Add to Cart" button

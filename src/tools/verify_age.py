@@ -2,6 +2,7 @@
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
+from ..core import browser_service
 from ..core.logging import get_logger
 from ..core.secrets import get_secret_manager
 
@@ -23,6 +24,16 @@ async def verify_age(page: Page) -> dict:
     """
     logger.info("Checking for age verification modal")
     
+    # Browser worker path (Node Playwright)
+    if browser_service.is_enabled():
+        secret_manager = get_secret_manager()
+        dob = {
+            "dob_month": secret_manager.get_secret("dob_month"),
+            "dob_day": secret_manager.get_secret("dob_day"),
+            "dob_year": secret_manager.get_secret("dob_year"),
+        }
+        return await browser_service.verify_age(dob)
+
     try:
         # Check if age verification overlay is present
         # Common selectors for age verification modals

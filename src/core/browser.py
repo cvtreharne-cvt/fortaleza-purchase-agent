@@ -156,6 +156,12 @@ async def managed_browser():
             page = await browser.new_page()
             # ... use page
     """
+    settings = get_settings()
+    if settings.browser_worker_url:
+        # Browser worker handles lifecycle; nothing to start/stop here
+        yield None
+        return
+
     browser = get_browser_manager()
     try:
         await browser.start()

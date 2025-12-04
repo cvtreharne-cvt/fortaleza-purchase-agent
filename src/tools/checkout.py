@@ -15,6 +15,7 @@ and includes detection for 3D Secure challenges that require manual intervention
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
+from ..core import browser_service
 from ..core.logging import get_logger
 from ..core.notify import send_notification
 from ..core.secrets import get_secret_manager
@@ -69,12 +70,32 @@ async def checkout_and_pay(page: Page, submit_order: bool = None) -> dict:
         submit_order = settings.mode == Mode.PROD
     
     logger.info("Starting checkout process", submit_order=submit_order, mode=settings.mode.value)
+
+    # Guard early when running local Python Playwright: must already be on checkout
+    if not browser_service.is_enabled() and "checkout" not in page.url.lower():
+        logger.warning("Aborting checkout - not on checkout page", current_url=page.url)
+        raise Exception(f"Not on checkout page. Current URL: {page.url}")
+
+    # Browser worker path (Node Playwright)
+    if browser_service.is_enabled():
+        secret_manager = get_secret_manager()
+        payment = {
+            "cc_number": secret_manager.get_secret("cc_number"),
+            "cc_exp_month": secret_manager.get_secret("cc_exp_month"),
+            "cc_exp_year": secret_manager.get_secret("cc_exp_year"),
+            "cc_cvv": secret_manager.get_secret("cc_cvv"),
+            "billing_name": secret_manager.get_secret("billing_name"),
+        }
+        result = await browser_service.checkout(submit_order, payment)
+        status = result.get("status")
+        if status == "error":
+            error_type = result.get("error_type")
+            if error_type == "ThreeDSecureRequired":
+                raise ThreeDSecureRequired(result.get("message", "3DS required"))
+            raise Exception(result.get("message", "Checkout failed"))
+        return result
     
     try:
-        # Verify we're on checkout page
-        if "checkout" not in page.url.lower():
-            raise Exception(f"Not on checkout page. Current URL: {page.url}")
-        
         # Wait for page to fully load
         await page.wait_for_load_state("domcontentloaded")
 

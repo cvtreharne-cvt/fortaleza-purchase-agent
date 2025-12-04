@@ -3,9 +3,11 @@
 from typing import Optional
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
+from ..core import browser_service
 from ..core.browser import get_browser_manager
 from ..core.config import get_settings
 from ..core.errors import NavigationError, ProtocolError, PageNotFoundError, UnexpectedPageError
+from ..core.secrets import get_secret_manager
 from ..core.logging import get_logger
 from .verify_age import verify_age
 
@@ -49,6 +51,24 @@ async def navigate_to_product(
         NavigationError: If navigation fails completely
     """
     settings = get_settings()
+
+    # Remote browser worker path (Node Playwright on Pi)
+    if browser_service.is_enabled():
+        secret_manager = get_secret_manager()
+        dob = {
+            "dob_month": secret_manager.get_secret("dob_month"),
+            "dob_day": secret_manager.get_secret("dob_day"),
+            "dob_year": secret_manager.get_secret("dob_year"),
+        }
+        result = await browser_service.navigate(direct_link, product_name, dob)
+        return {
+            "status": result.get("status", "error"),
+            "method": result.get("method", "direct_link"),
+            "current_url": result.get("current_url"),
+            "page": None,
+            "message": result.get("message"),
+        }
+
     browser = get_browser_manager()
     page = await browser.new_page()
 
