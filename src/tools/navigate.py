@@ -20,6 +20,9 @@ SEARCH_INPUT_TIMEOUT = 5000  # Timeout for search input field to appear
 SEARCH_SUGGESTIONS_WAIT_MS = 1000  # Wait for search suggestions dropdown to populate
 SEARCH_RESULTS_WAIT_MS = 2000  # Wait for search results page to load
 
+# Product scoring constants
+MIN_WORD_MATCH_THRESHOLD = 2  # Minimum number of matching words required for product scoring
+
 
 async def navigate_to_product(
     direct_link: str,
@@ -153,14 +156,22 @@ async def _verify_product_page(page: Page) -> bool:
 async def _search_for_product(page: Page, product_name: str) -> dict:
     """
     Navigate to homepage and search for product.
-    
+
+    Search Strategy:
+    1. First tries exact match in search suggestions and results
+    2. If no exact match, scores all product links based on word matches:
+       - Splits product name into words (e.g., "Hamilton Pot Still" -> ['hamilton', 'pot', 'still'])
+       - Scores each product URL by counting matching words
+       - Requires minimum threshold of matching words (dynamic based on product name length)
+       - Selects highest-scoring product
+
     Args:
         page: Playwright page
         product_name: Name of product to search for
-        
+
     Returns:
         dict with status and current_url
-        
+
     Raises:
         NavigationError: If search fails
     """
@@ -258,17 +269,14 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
             await page.wait_for_load_state("domcontentloaded")
             await page.wait_for_timeout(SEARCH_RESULTS_WAIT_MS)
             
-            # Try to find in search results
-            # Be more flexible with matching - split product name into key words
-            # For "Hamilton Grass Skirt Blend Rum", try matching on "hamilton" and "grass"
+            # Try to find in search results with word-based scoring
+            # Split product name into words for flexible matching
             name_parts = product_name_lower.split('-')
 
+            # First try exact match
             result_selectors = [
                 f"a[href*='{product_name_lower}'][href*='products']",  # Exact match
                 f".productitem a[href*='{product_name_lower}']",       # Product item with exact
-                f"a[href*='products'][href*='{name_parts[0]}']",       # First word (e.g., "hamilton")
-                ".product-item a[href*='products']",                    # Any product link
-                "a.product-link[href*='products']",                     # Product link class
             ]
 
             for selector in result_selectors:
@@ -276,10 +284,47 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
                     product_link = await page.query_selector(selector)
                     if product_link:
                         href = await product_link.get_attribute('href')
-                        logger.debug("Found product link in results", selector=selector, href=href)
+                        logger.debug("Found exact product match", selector=selector, href=href)
                         break
                 except Exception:
                     continue
+
+            # If no exact match, find best partial match by scoring all product links
+            if not product_link:
+                logger.info("No exact match, scoring all product links", name_parts=name_parts)
+                try:
+                    # Get all product links from search results
+                    all_product_links = await page.query_selector_all("a[href*='products']")
+
+                    best_link = None
+                    best_score = 0
+
+                    for link in all_product_links:
+                        href = await link.get_attribute('href')
+                        if not href or '/search' in href or '/collections' in href:
+                            continue
+
+                        # Score based on how many words from product name appear in URL
+                        score = sum(1 for part in name_parts if part in href.lower())
+
+                        logger.debug("Scoring product link", href=href, score=score, max_score=len(name_parts))
+
+                        if score > best_score:
+                            best_score = score
+                            best_link = link
+
+                    # Adjust threshold dynamically for single-word products
+                    min_threshold = min(MIN_WORD_MATCH_THRESHOLD, len(name_parts))
+
+                    if best_link and best_score >= min_threshold:
+                        product_link = best_link
+                        href = await product_link.get_attribute('href')
+                        logger.info("Found best matching product", href=href, score=best_score, max_score=len(name_parts), threshold=min_threshold)
+                    else:
+                        logger.warning("No good product match found", best_score=best_score, threshold=min_threshold)
+
+                except Exception as e:
+                    logger.error("Error scoring product links", error=str(e))
         
         if not product_link:
             raise NavigationError(f"Product '{product_name}' not found in search suggestions or results")

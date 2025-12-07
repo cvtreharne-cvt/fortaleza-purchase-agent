@@ -171,3 +171,109 @@ async def test_page_usable_after_navigation(browser):
 
     # Clean up: close the page
     await page.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+async def test_scoring_selects_best_match(browser):
+    """Test that scoring algorithm selects highest-match product from search results.
+
+    This test verifies the product scoring algorithm correctly identifies the best
+    matching product when multiple similar products exist. It searches for a specific
+    Hamilton rum variant and ensures the scoring algorithm selects the correct one
+    instead of a different variant.
+    """
+    # Use a non-existent URL to force search fallback
+    test_url = "https://www.bittersandbottles.com/products/nonexistent-hamilton-product"
+
+    # Search for a specific Hamilton product
+    # Expected: Should find "Hamilton Pot Still Blonde" (score: 4/4 words)
+    # Should NOT find "Hamilton Breezeway Blend" (score: 1/4 words - only "hamilton")
+    result = await navigate_to_product(
+        direct_link=test_url,
+        product_name="Hamilton Pot Still Blonde"
+    )
+
+    # Should use search fallback
+    assert result["method"] == "search", "Should use search fallback for non-existent URL"
+
+    # Verify correct product was selected
+    url_lower = result["current_url"].lower()
+    assert "hamilton" in url_lower, "URL should contain 'hamilton'"
+    assert "pot" in url_lower or "still" in url_lower or "blonde" in url_lower, \
+        "URL should contain at least one of: pot, still, or blonde"
+
+    # Verify we didn't select a different Hamilton variant
+    assert "breezeway" not in url_lower, "Should not select Hamilton Breezeway Blend"
+
+    # Clean up
+    if "page" in result:
+        await result["page"].close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+async def test_single_word_product_scoring(browser):
+    """Test that scoring works correctly for single-word product names.
+
+    This test verifies the dynamic threshold adjustment for single-word products.
+    With MIN_WORD_MATCH_THRESHOLD = 2, single-word products would never match
+    unless the threshold is adjusted to min(2, len(name_parts)).
+    """
+    # Use a non-existent URL to force search fallback
+    test_url = "https://www.bittersandbottles.com/products/nonexistent-fortaleza"
+
+    # Search for single-word product name
+    result = await navigate_to_product(
+        direct_link=test_url,
+        product_name="Fortaleza"
+    )
+
+    # Should successfully find the product via search
+    assert result["method"] == "search", "Should use search fallback"
+    assert result["status"] == "success", "Should successfully find product"
+    assert "fortaleza" in result["current_url"].lower(), "URL should contain 'fortaleza'"
+
+    # Clean up
+    if "page" in result:
+        await result["page"].close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+async def test_multi_word_product_scoring_threshold(browser):
+    """Test that multi-word products require minimum threshold of matching words.
+
+    This test verifies that products with multiple words require at least
+    MIN_WORD_MATCH_THRESHOLD (2) matching words to be selected, preventing
+    false positives from single-word matches.
+    """
+    # Use a non-existent URL to force search fallback
+    test_url = "https://www.bittersandbottles.com/products/nonexistent-product"
+
+    # Search for a multi-word product
+    # This should require at least 2 matching words in the URL
+    try:
+        result = await navigate_to_product(
+            direct_link=test_url,
+            product_name="Hamilton Pot Still Blonde Rum"
+        )
+
+        # If successful, verify it found a good match
+        assert result["method"] == "search"
+        url_lower = result["current_url"].lower()
+
+        # Count how many words from the search term appear in URL
+        search_words = ["hamilton", "pot", "still", "blonde", "rum"]
+        matches = sum(1 for word in search_words if word in url_lower)
+
+        # Should have at least 2 matching words
+        assert matches >= 2, f"URL should contain at least 2 matching words, found {matches}"
+
+        # Clean up
+        if "page" in result:
+            await result["page"].close()
+
+    except Exception as e:
+        # Acceptable if no product meets the threshold
+        assert "not found" in str(e).lower(), f"Should fail with 'not found' error, got: {e}"
