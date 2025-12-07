@@ -13,13 +13,16 @@ The checkout process supports dryrun mode for testing without actual purchases,
 and includes detection for 3D Secure challenges that require manual intervention.
 """
 
+import asyncio
+import time
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
 from ..core.logging import get_logger
-from ..core.notify import send_notification
+from ..core.notify import get_pushover_client
 from ..core.secrets import get_secret_manager
 from ..core.config import get_settings, Mode
 from ..core.errors import ThreeDSecureRequired
+from ..core.approval import create_approval_request, get_approval_status
 
 logger = get_logger(__name__)
 
@@ -37,38 +40,44 @@ ORDER_SUBMISSION_DELAY = 5000  # Wait time after clicking Pay now
 SECURE_CHECK_TIMEOUT = 2000  # Timeout for 3D Secure detection
 ERROR_CHECK_TIMEOUT = 2000  # Timeout for payment error detection
 
+# Approval polling constants
+APPROVAL_TIMEOUT_MINUTES = 10  # Total time to wait for human approval
+APPROVAL_POLL_INTERVAL_SECONDS = 2  # How often to check approval status
 
-async def checkout_and_pay(page: Page, submit_order: bool = None) -> dict:
+
+async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = None) -> dict:
     """
     Complete checkout process with payment information.
-    
+
     This function:
     - Verifies we're on checkout page
     - Selects "Pick up" as the Delivery method
     - Selects pickup location (South SF preferred, SF fallback)
     - Fills in credit card information
     - Fills in cardholder name
-    - Optionally submits the order (based on mode)
-    
+    - Requests human approval (if submitting order)
+    - Optionally submits the order (based on mode and approval)
+
     Args:
         page: Playwright page (should be on checkout page)
         submit_order: If True, submits order. If None, uses mode setting
                      (dryrun/test=False, prod=True)
-        
+        run_id: Unique identifier for this agent run (required for approval)
+
     Returns:
         dict with status, message, and order details
-        
+
     Raises:
         ThreeDSecureRequired: If 3D Secure verification is needed
-        Exception: For other failures
+        Exception: For other failures (including approval rejection/timeout)
     """
     settings = get_settings()
-    
+
     # Determine if we should submit based on mode
     if submit_order is None:
         submit_order = settings.mode == Mode.PROD
-    
-    logger.info("Starting checkout process", submit_order=submit_order, mode=settings.mode.value)
+
+    logger.info("Starting checkout process", submit_order=submit_order, mode=settings.mode.value, run_id=run_id)
     
     try:
         # Verify we're on checkout page
