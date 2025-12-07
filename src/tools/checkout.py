@@ -316,6 +316,7 @@ async def _get_order_summary(page: Page, pickup_location: str | None = None) -> 
         "tax": "unknown",
         "total": "unknown",
         "pickup_location": pickup_location or "unknown",
+        "quantity": "unknown",
     }
 
     # Try to get subtotal - grandparent contains "Subtotal\n$36.50"
@@ -361,6 +362,37 @@ async def _get_order_summary(page: Page, pickup_location: str | None = None) -> 
         logger.debug("Could not get total", error=str(e))
 
     # Note: pickup_location is passed in as a parameter (already detected earlier)
+
+    # Try to get quantity - sum visible item quantities in the order summary
+    try:
+        qty_total = 0
+        qty_nodes = await page.query_selector_all(
+            ".product__quantity, .order-summary__quantity, [data-checkout-line-item] .quantity, .product-table__quantity, select[data-cartitem-quantity]"
+        )
+        for node in qty_nodes:
+            # For select elements, use value attribute; otherwise parse inner text
+            tag = (await node.evaluate("el => el.tagName")).lower()
+            if tag == "select":
+                value = await node.get_attribute("value")
+                if value and value.isdigit():
+                    qty_total += int(value)
+                else:
+                    # try selected option text
+                    option = await node.query_selector("option:checked")
+                    if option:
+                        opt_text = (await option.inner_text() or "").strip()
+                        digits = "".join(ch for ch in opt_text if ch.isdigit())
+                        if digits:
+                            qty_total += int(digits)
+            else:
+                text = (await node.inner_text() or "").strip()
+                digits = "".join(ch for ch in text if ch.isdigit())
+                if digits:
+                    qty_total += int(digits)
+        if qty_total > 0:
+            summary["quantity"] = qty_total
+    except Exception as e:
+        logger.debug("Could not get quantity", error=str(e))
 
     # Log warnings for any fields that could not be extracted
     if summary["subtotal"] == "unknown":

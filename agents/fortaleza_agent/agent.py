@@ -1,5 +1,6 @@
 """Google ADK Agent Orchestrator for B&B Purchase - Course-aligned implementation."""
 
+import asyncio
 import json
 import os
 from datetime import datetime
@@ -10,6 +11,7 @@ from google.adk.agents import Agent
 from google.adk.models.google_llm import Gemini
 from google.adk.runners import InMemoryRunner
 from google.adk.tools import FunctionTool
+from google.genai import types
 from playwright.async_api import TimeoutError as PlaywrightTimeout, Error as PlaywrightError
 
 from src.core import browser_service
@@ -31,7 +33,15 @@ from src.tools.checkout import checkout_and_pay
 
 logger = get_logger(__name__)
 
-AGENT_MODEL = "gemini-2.5-flash"
+AGENT_MODEL = "gemini-2.5-flash-lite"
+
+# Retry config for transient LLM/http errors
+retry_config = types.HttpRetryOptions(
+    attempts=5,           # Maximum retry attempts
+    exp_base=7,           # Delay multiplier
+    initial_delay=1,      # Initial delay before first retry (seconds)
+    http_status_codes=[429, 500, 503, 504],  # Retry on these HTTP errors
+)
 
 # Agent system instructions - guides the agent's reasoning
 # This is aligned with course concepts: clear instructions, tool usage strategy
@@ -442,7 +452,6 @@ def log_agent_events(events: List, event_id: str, product_name: str) -> None:
         total_tokens=total_prompt_tokens + total_response_tokens
     )
 
-
 async def run_purchase_agent(
     direct_link: str,
     product_name: str,
@@ -487,6 +496,7 @@ async def run_purchase_agent(
                 name="bnb_purchase_agent",
                 model=Gemini(
                     model=AGENT_MODEL,
+                    retry_config=retry_config,
                 ),
                 description="AI agent that autonomously purchases products from Bitters & Bottles Spirit Shop.",
                 instruction=SYSTEM_INSTRUCTION,
@@ -595,7 +605,10 @@ import os
 if os.getenv("GOOGLE_API_KEY"):
     root_agent = Agent(
         name="bnb_purchase_agent",
-        model=Gemini(model=AGENT_MODEL),
+        model=Gemini(
+            model=AGENT_MODEL,
+            retry_config=retry_config,
+        ),
         description="AI agent that autonomously purchases products from Bitters & Bottles Spirit Shop.",
         instruction=SYSTEM_INSTRUCTION,
         tools=create_adk_tools(),

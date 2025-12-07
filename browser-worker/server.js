@@ -746,6 +746,7 @@ async function getOrderSummary(currentPage, pickupLocation) {
     tax: 'unknown',
     total: 'unknown',
     pickup_location: pickupLocation || 'unknown',
+    quantity: 'unknown',
   };
 
   try {
@@ -775,6 +776,35 @@ async function getOrderSummary(currentPage, pickupLocation) {
       const text = await grandparent.innerText();
       if (text.includes('$')) summary.total = `$${text.split('$')[1].trim().split(/\\s+/)[0]}`;
     }
+  } catch (_) {}
+
+  // Quantity: sum item quantities in order summary
+  try {
+    let qtyTotal = 0;
+    const qtyNodes = await currentPage.$$(
+      '.product__quantity, .order-summary__quantity, [data-checkout-line-item] .quantity, .product-table__quantity, select[data-cartitem-quantity]',
+    );
+    for (const node of qtyNodes) {
+      const tag = ((await node.evaluate((el) => el.tagName)) || '').toLowerCase();
+      if (tag === 'select') {
+        const val = await node.getAttribute('value');
+        if (val && /^\d+$/.test(val)) {
+          qtyTotal += parseInt(val, 10);
+        } else {
+          const opt = await node.$('option:checked');
+          if (opt) {
+            const optText = ((await opt.innerText()) || '').trim();
+            const digitsOpt = optText.replace(/[^0-9]/g, '');
+            if (digitsOpt) qtyTotal += parseInt(digitsOpt, 10);
+          }
+        }
+      } else {
+        const text = ((await node.innerText()) || '').trim();
+        const digits = text.replace(/[^0-9]/g, '');
+        if (digits) qtyTotal += parseInt(digits, 10);
+      }
+    }
+    if (qtyTotal > 0) summary.quantity = qtyTotal;
   } catch (_) {}
 
   return summary;
