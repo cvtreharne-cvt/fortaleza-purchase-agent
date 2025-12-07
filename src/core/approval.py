@@ -1,6 +1,7 @@
 """Human approval state management for purchase decisions."""
 
-from datetime import datetime, timedelta
+import threading
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional
 from .logging import get_logger
 
@@ -9,6 +10,7 @@ logger = get_logger(__name__)
 # In-memory approval state storage
 # In production, consider using Redis for multi-instance deployments
 _pending_approvals: Dict[str, dict] = {}
+_approvals_lock = threading.Lock()  # Thread safety for concurrent access
 
 
 def create_approval_request(
@@ -24,14 +26,19 @@ def create_approval_request(
         order_summary: Order details for human review
         timeout_minutes: How long to wait for approval
     """
-    _pending_approvals[run_id] = {
-        "status": "pending",
-        "order_summary": order_summary,
-        "created_at": datetime.now(),
-        "expires_at": datetime.now() + timedelta(minutes=timeout_minutes),
-        "decision": None,
-        "decided_at": None
-    }
+    # Clean up old approvals before creating new one (prevents memory leak)
+    cleanup_old_approvals()
+
+    with _approvals_lock:
+        now = datetime.now(timezone.utc)
+        _pending_approvals[run_id] = {
+            "status": "pending",
+            "order_summary": order_summary,
+            "created_at": now,
+            "expires_at": now + timedelta(minutes=timeout_minutes),
+            "decision": None,
+            "decided_at": None
+        }
 
     logger.info(
         "Approval request created",
@@ -51,16 +58,18 @@ def get_approval_status(run_id: str) -> Optional[dict]:
     Returns:
         Approval state dict or None if not found
     """
-    approval = _pending_approvals.get(run_id)
+    with _approvals_lock:
+        approval = _pending_approvals.get(run_id)
 
-    if approval and datetime.now() > approval["expires_at"]:
-        # Mark as expired
-        if approval["decision"] is None:
-            approval["status"] = "expired"
-            approval["decision"] = "timeout"
-            logger.warning("Approval request expired", run_id=run_id)
+        if approval and datetime.now(timezone.utc) > approval["expires_at"]:
+            # Mark as expired
+            if approval["decision"] is None:
+                approval["status"] = "expired"
+                approval["decision"] = "timeout"
+                logger.warning("Approval request expired", run_id=run_id)
 
-    return approval
+        # Return a copy to prevent external mutation
+        return approval.copy() if approval else None
 
 
 def approve_request(run_id: str) -> bool:
@@ -73,30 +82,31 @@ def approve_request(run_id: str) -> bool:
     Returns:
         True if approval was recorded, False if request not found or expired
     """
-    approval = _pending_approvals.get(run_id)
+    with _approvals_lock:
+        approval = _pending_approvals.get(run_id)
 
-    if not approval:
-        logger.warning("Approval attempt for unknown run_id", run_id=run_id)
-        return False
+        if not approval:
+            logger.warning("Approval attempt for unknown run_id", run_id=run_id)
+            return False
 
-    if datetime.now() > approval["expires_at"]:
-        logger.warning("Approval attempt after expiration", run_id=run_id)
-        return False
+        if datetime.now(timezone.utc) > approval["expires_at"]:
+            logger.warning("Approval attempt after expiration", run_id=run_id)
+            return False
 
-    if approval["decision"] is not None:
-        logger.warning(
-            "Approval attempt for already-decided request",
-            run_id=run_id,
-            existing_decision=approval["decision"]
-        )
-        return False
+        if approval["decision"] is not None:
+            logger.warning(
+                "Approval attempt for already-decided request",
+                run_id=run_id,
+                existing_decision=approval["decision"]
+            )
+            return False
 
-    approval["decision"] = "approved"
-    approval["status"] = "approved"
-    approval["decided_at"] = datetime.now()
+        approval["decision"] = "approved"
+        approval["status"] = "approved"
+        approval["decided_at"] = datetime.now(timezone.utc)
 
-    logger.info("Purchase approved by human", run_id=run_id)
-    return True
+        logger.info("Purchase approved by human", run_id=run_id)
+        return True
 
 
 def reject_request(run_id: str) -> bool:
@@ -109,30 +119,31 @@ def reject_request(run_id: str) -> bool:
     Returns:
         True if rejection was recorded, False if request not found or expired
     """
-    approval = _pending_approvals.get(run_id)
+    with _approvals_lock:
+        approval = _pending_approvals.get(run_id)
 
-    if not approval:
-        logger.warning("Rejection attempt for unknown run_id", run_id=run_id)
-        return False
+        if not approval:
+            logger.warning("Rejection attempt for unknown run_id", run_id=run_id)
+            return False
 
-    if datetime.now() > approval["expires_at"]:
-        logger.warning("Rejection attempt after expiration", run_id=run_id)
-        return False
+        if datetime.now(timezone.utc) > approval["expires_at"]:
+            logger.warning("Rejection attempt after expiration", run_id=run_id)
+            return False
 
-    if approval["decision"] is not None:
-        logger.warning(
-            "Rejection attempt for already-decided request",
-            run_id=run_id,
-            existing_decision=approval["decision"]
-        )
-        return False
+        if approval["decision"] is not None:
+            logger.warning(
+                "Rejection attempt for already-decided request",
+                run_id=run_id,
+                existing_decision=approval["decision"]
+            )
+            return False
 
-    approval["decision"] = "rejected"
-    approval["status"] = "rejected"
-    approval["decided_at"] = datetime.now()
+        approval["decision"] = "rejected"
+        approval["status"] = "rejected"
+        approval["decided_at"] = datetime.now(timezone.utc)
 
-    logger.info("Purchase rejected by human", run_id=run_id)
-    return True
+        logger.info("Purchase rejected by human", run_id=run_id)
+        return True
 
 
 def cleanup_old_approvals(max_age_hours: int = 24) -> int:
@@ -145,28 +156,30 @@ def cleanup_old_approvals(max_age_hours: int = 24) -> int:
     Returns:
         Number of approvals cleaned up
     """
-    cutoff = datetime.now() - timedelta(hours=max_age_hours)
-    to_remove = [
-        run_id for run_id, approval in _pending_approvals.items()
-        if approval["created_at"] < cutoff
-    ]
+    with _approvals_lock:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+        to_remove = [
+            run_id for run_id, approval in _pending_approvals.items()
+            if approval["created_at"] < cutoff
+        ]
 
-    for run_id in to_remove:
-        del _pending_approvals[run_id]
+        for run_id in to_remove:
+            del _pending_approvals[run_id]
 
-    if to_remove:
-        logger.info(
-            "Cleaned up old approval requests",
-            count=len(to_remove),
-            max_age_hours=max_age_hours
-        )
+        if to_remove:
+            logger.info(
+                "Cleaned up old approval requests",
+                count=len(to_remove),
+                max_age_hours=max_age_hours
+            )
 
-    return len(to_remove)
+        return len(to_remove)
 
 
 def get_pending_count() -> int:
     """Get count of pending approval requests."""
-    return sum(
-        1 for approval in _pending_approvals.values()
-        if approval["status"] == "pending"
-    )
+    with _approvals_lock:
+        return sum(
+            1 for approval in _pending_approvals.values()
+            if approval["status"] == "pending"
+        )

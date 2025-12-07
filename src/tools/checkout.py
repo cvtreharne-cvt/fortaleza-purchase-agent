@@ -101,10 +101,55 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
         logger.info("Order summary", **order_summary)
         
         if submit_order:
+            # Request human approval before submitting
+            if run_id:
+                logger.info("Requesting human approval for purchase", run_id=run_id)
+
+                # Create approval request
+                create_approval_request(
+                    run_id=run_id,
+                    order_summary=order_summary,
+                    timeout_minutes=APPROVAL_TIMEOUT_MINUTES
+                )
+
+                # Send Pushover notification with approval request
+                pushover_client = get_pushover_client()
+                notification_sent = pushover_client.send_approval_request(
+                    run_id=run_id,
+                    order_summary=order_summary
+                )
+
+                if not notification_sent:
+                    # Clean up approval request if notification failed
+                    from ..core.approval import _pending_approvals
+                    _pending_approvals.pop(run_id, None)
+                    raise Exception("Failed to send approval notification")
+
+                # Poll for approval
+                logger.info("Polling for approval decision",
+                           timeout_minutes=APPROVAL_TIMEOUT_MINUTES,
+                           poll_interval_seconds=APPROVAL_POLL_INTERVAL_SECONDS)
+
+                approval_status = await _poll_for_approval(run_id)
+
+                if approval_status["decision"] == "approved":
+                    logger.info("Purchase approved by human", run_id=run_id)
+                elif approval_status["decision"] == "rejected":
+                    logger.warning("Purchase rejected by human", run_id=run_id)
+                    raise Exception("Purchase rejected by human approval")
+                elif approval_status["decision"] == "timeout":
+                    logger.warning("Approval request timed out", run_id=run_id)
+                    raise Exception("Approval request timed out after 10 minutes")
+                else:
+                    logger.error("Unexpected approval status", status=approval_status)
+                    raise Exception(f"Unexpected approval status: {approval_status['decision']}")
+            else:
+                logger.warning("No run_id provided - skipping approval (not recommended for production)")
+
             # Submit the order
             logger.info("Submitting order for real")
             result = await _submit_order(page)
-            
+
             return {
                 "status": "success",
                 "message": "Order submitted successfully",
@@ -132,6 +177,58 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
     except Exception as e:
         logger.error("Checkout failed", error=str(e))
         raise
+
+
+async def _poll_for_approval(run_id: str) -> dict:
+    """
+    Poll for human approval decision.
+
+    Polls the approval status every APPROVAL_POLL_INTERVAL_SECONDS
+    for up to APPROVAL_TIMEOUT_MINUTES.
+
+    Args:
+        run_id: Unique identifier for this approval request
+
+    Returns:
+        dict with approval status (includes 'decision' field)
+
+    Raises:
+        Exception: If approval request not found or polling fails
+    """
+    timeout_seconds = APPROVAL_TIMEOUT_MINUTES * 60
+    poll_count = 0
+    max_polls = timeout_seconds // APPROVAL_POLL_INTERVAL_SECONDS
+
+    while poll_count < max_polls:
+        approval_status = get_approval_status(run_id)
+
+        if not approval_status:
+            raise Exception(f"Approval request {run_id} not found")
+
+        # Check if decision has been made
+        if approval_status["decision"] is not None:
+            logger.info("Approval decision received",
+                       run_id=run_id,
+                       decision=approval_status["decision"],
+                       polls=poll_count)
+            return approval_status
+
+        # Wait before next poll
+        await asyncio.sleep(APPROVAL_POLL_INTERVAL_SECONDS)
+        poll_count += 1
+
+        if poll_count % 30 == 0:  # Log every minute
+            logger.debug("Still waiting for approval",
+                        run_id=run_id,
+                        elapsed_minutes=poll_count * APPROVAL_POLL_INTERVAL_SECONDS / 60)
+
+    # Timeout reached - check one final time
+    final_status = get_approval_status(run_id)
+    if final_status and final_status["decision"] is not None:
+        return final_status
+
+    logger.warning("Approval polling timed out", run_id=run_id)
+    raise Exception(f"Approval polling timed out after {APPROVAL_TIMEOUT_MINUTES} minutes")
 
 
 async def _verify_pickup_selected(page: Page) -> None:

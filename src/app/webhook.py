@@ -2,8 +2,10 @@
 
 import hmac
 import hashlib
+import threading
 import time
-from typing import Set
+from collections import defaultdict
+from typing import Dict, Set, Tuple
 
 from fastapi import APIRouter, Header, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
@@ -20,6 +22,13 @@ router = APIRouter()
 # In-memory store for processed event IDs (in production, use Redis or database)
 _processed_events: Set[str] = set()
 
+# Rate limiting for approval endpoints (IP address -> (request_count, window_start_time))
+# Limit: 10 requests per minute per IP
+_rate_limit_store: Dict[str, Tuple[int, float]] = defaultdict(lambda: (0, time.time()))
+_rate_limit_lock = threading.Lock()
+RATE_LIMIT_REQUESTS = 10  # Max requests per window
+RATE_LIMIT_WINDOW = 60  # Window duration in seconds
+
 
 class WebhookPayload(BaseModel):
     """Webhook payload from Raspberry Pi Gmail monitor."""
@@ -28,6 +37,45 @@ class WebhookPayload(BaseModel):
     subject: str = Field(..., description="Email subject line")
     direct_link: str = Field(..., description="Direct link to product page")
     product_hint: str = Field(..., description="Product name hint from email")
+
+
+def check_rate_limit(client_ip: str) -> None:
+    """
+    Check if client has exceeded rate limit for approval endpoints.
+
+    Args:
+        client_ip: Client IP address
+
+    Raises:
+        HTTPException: If rate limit exceeded (429 Too Many Requests)
+    """
+    current_time = time.time()
+
+    with _rate_limit_lock:
+        request_count, window_start = _rate_limit_store[client_ip]
+
+        # Check if we're in a new window
+        if current_time - window_start > RATE_LIMIT_WINDOW:
+            # Reset counter for new window
+            _rate_limit_store[client_ip] = (1, current_time)
+            return
+
+        # Check if limit exceeded
+        if request_count >= RATE_LIMIT_REQUESTS:
+            logger.warning(
+                "Rate limit exceeded for approval endpoint",
+                client_ip=client_ip,
+                requests=request_count,
+                window=RATE_LIMIT_WINDOW
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Max {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW} seconds.",
+                headers={"Retry-After": str(int(RATE_LIMIT_WINDOW - (current_time - window_start)))}
+            )
+
+        # Increment counter
+        _rate_limit_store[client_ip] = (request_count + 1, window_start)
 
 
 def verify_hmac_signature(
@@ -195,16 +243,21 @@ async def handle_webhook(
 
 
 @router.post("/approval/{run_id}/approve")
-async def approve_purchase(run_id: str):
+async def approve_purchase(run_id: str, request: Request):
     """
     Handle purchase approval callback from Pushover.
 
     Args:
         run_id: Unique identifier for the agent run
+        request: FastAPI request object (for rate limiting)
 
     Returns:
         Approval status and details
     """
+    # Rate limiting (prevent brute force attacks on run_id)
+    client_ip = request.client.host if request.client else "unknown"
+    check_rate_limit(client_ip)
+
     from ..core.approval import approve_request, get_approval_status
 
     success = approve_request(run_id)
@@ -228,16 +281,21 @@ async def approve_purchase(run_id: str):
 
 
 @router.post("/approval/{run_id}/reject")
-async def reject_purchase(run_id: str):
+async def reject_purchase(run_id: str, request: Request):
     """
     Handle purchase rejection callback from Pushover.
 
     Args:
         run_id: Unique identifier for the agent run
+        request: FastAPI request object (for rate limiting)
 
     Returns:
         Rejection status and details
     """
+    # Rate limiting (prevent brute force attacks on run_id)
+    client_ip = request.client.host if request.client else "unknown"
+    check_rate_limit(client_ip)
+
     from ..core.approval import reject_request, get_approval_status
 
     success = reject_request(run_id)
@@ -261,16 +319,21 @@ async def reject_purchase(run_id: str):
 
 
 @router.get("/approval/{run_id}/status")
-async def get_approval_status_endpoint(run_id: str):
+async def get_approval_status_endpoint(run_id: str, request: Request):
     """
     Get current status of an approval request.
 
     Args:
         run_id: Unique identifier for the agent run
+        request: FastAPI request object (for rate limiting)
 
     Returns:
         Current approval status
     """
+    # Rate limiting (prevent brute force attacks on run_id)
+    client_ip = request.client.host if request.client else "unknown"
+    check_rate_limit(client_ip)
+
     from ..core.approval import get_approval_status
 
     approval = get_approval_status(run_id)
