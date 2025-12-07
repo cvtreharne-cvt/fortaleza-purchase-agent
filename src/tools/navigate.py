@@ -20,6 +20,9 @@ SEARCH_INPUT_TIMEOUT = 5000  # Timeout for search input field to appear
 SEARCH_SUGGESTIONS_WAIT_MS = 1000  # Wait for search suggestions dropdown to populate
 SEARCH_RESULTS_WAIT_MS = 2000  # Wait for search results page to load
 
+# Product scoring constants
+MIN_WORD_MATCH_THRESHOLD = 2  # Minimum number of matching words required for product scoring
+
 
 async def navigate_to_product(
     direct_link: str,
@@ -153,14 +156,22 @@ async def _verify_product_page(page: Page) -> bool:
 async def _search_for_product(page: Page, product_name: str) -> dict:
     """
     Navigate to homepage and search for product.
-    
+
+    Search Strategy:
+    1. First tries exact match in search suggestions and results
+    2. If no exact match, scores all product links based on word matches:
+       - Splits product name into words (e.g., "Hamilton Pot Still" -> ['hamilton', 'pot', 'still'])
+       - Scores each product URL by counting matching words
+       - Requires minimum threshold of matching words (dynamic based on product name length)
+       - Selects highest-scoring product
+
     Args:
         page: Playwright page
         product_name: Name of product to search for
-        
+
     Returns:
         dict with status and current_url
-        
+
     Raises:
         NavigationError: If search fails
     """
@@ -302,12 +313,15 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
                             best_score = score
                             best_link = link
 
-                    if best_link and best_score >= 2:  # Require at least 2 word matches
+                    # Adjust threshold dynamically for single-word products
+                    min_threshold = min(MIN_WORD_MATCH_THRESHOLD, len(name_parts))
+
+                    if best_link and best_score >= min_threshold:
                         product_link = best_link
                         href = await product_link.get_attribute('href')
-                        logger.info("Found best matching product", href=href, score=best_score, max_score=len(name_parts))
+                        logger.info("Found best matching product", href=href, score=best_score, max_score=len(name_parts), threshold=min_threshold)
                     else:
-                        logger.warning("No good product match found", best_score=best_score)
+                        logger.warning("No good product match found", best_score=best_score, threshold=min_threshold)
 
                 except Exception as e:
                     logger.error("Error scoring product links", error=str(e))
