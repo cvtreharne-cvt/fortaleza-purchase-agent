@@ -4,7 +4,6 @@ import hmac
 import hashlib
 import threading
 import time
-from collections import defaultdict
 from typing import Dict, Set, Tuple
 
 from fastapi import APIRouter, Header, HTTPException, Request, BackgroundTasks
@@ -24,10 +23,12 @@ _processed_events: Set[str] = set()
 
 # Rate limiting for approval endpoints (IP address -> (request_count, window_start_time))
 # Limit: 10 requests per minute per IP
-_rate_limit_store: Dict[str, Tuple[int, float]] = defaultdict(lambda: (0, time.time()))
+_rate_limit_store: Dict[str, Tuple[int, float]] = {}
 _rate_limit_lock = threading.Lock()
 RATE_LIMIT_REQUESTS = 10  # Max requests per window
 RATE_LIMIT_WINDOW = 60  # Window duration in seconds
+RATE_LIMIT_CLEANUP_INTERVAL = 300  # Cleanup every 5 minutes
+_last_rate_limit_cleanup = time.time()
 
 
 class WebhookPayload(BaseModel):
@@ -37,6 +38,32 @@ class WebhookPayload(BaseModel):
     subject: str = Field(..., description="Email subject line")
     direct_link: str = Field(..., description="Direct link to product page")
     product_hint: str = Field(..., description="Product name hint from email")
+
+
+def cleanup_rate_limit_store() -> None:
+    """Clean up old entries from rate limit store to prevent memory leak."""
+    global _last_rate_limit_cleanup
+    current_time = time.time()
+
+    # Only cleanup if enough time has passed
+    if current_time - _last_rate_limit_cleanup < RATE_LIMIT_CLEANUP_INTERVAL:
+        return
+
+    with _rate_limit_lock:
+        # Remove entries older than 2x the window duration
+        cutoff_time = current_time - (2 * RATE_LIMIT_WINDOW)
+        ips_to_remove = [
+            ip for ip, (_, window_start) in _rate_limit_store.items()
+            if window_start < cutoff_time
+        ]
+
+        for ip in ips_to_remove:
+            del _rate_limit_store[ip]
+
+        if ips_to_remove:
+            logger.debug("Cleaned up rate limit store", removed_count=len(ips_to_remove))
+
+        _last_rate_limit_cleanup = current_time
 
 
 def check_rate_limit(client_ip: str) -> None:
@@ -51,7 +78,14 @@ def check_rate_limit(client_ip: str) -> None:
     """
     current_time = time.time()
 
+    # Periodic cleanup to prevent memory leak
+    cleanup_rate_limit_store()
+
     with _rate_limit_lock:
+        # Get existing rate limit data or initialize new entry
+        if client_ip not in _rate_limit_store:
+            _rate_limit_store[client_ip] = (0, current_time)
+
         request_count, window_start = _rate_limit_store[client_ip]
 
         # Check if we're in a new window

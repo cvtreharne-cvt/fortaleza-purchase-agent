@@ -176,6 +176,24 @@ def cleanup_old_approvals(max_age_hours: int = 24) -> int:
         return len(to_remove)
 
 
+def delete_approval_request(run_id: str) -> bool:
+    """
+    Delete an approval request.
+
+    Args:
+        run_id: Unique identifier for the agent run
+
+    Returns:
+        True if the approval was deleted, False if it didn't exist
+    """
+    with _approvals_lock:
+        if run_id in _pending_approvals:
+            del _pending_approvals[run_id]
+            logger.info("Approval request deleted", run_id=run_id)
+            return True
+        return False
+
+
 def get_pending_count() -> int:
     """Get count of pending approval requests."""
     with _approvals_lock:

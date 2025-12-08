@@ -52,7 +52,7 @@ class TestApprovalDecisions:
 
         result = approve_request("test-approve-1")
 
-        assert result == True
+        assert result is True
 
         status = get_approval_status("test-approve-1")
         assert status["decision"] == "approved"
@@ -66,7 +66,7 @@ class TestApprovalDecisions:
 
         result = reject_request("test-reject-1")
 
-        assert result == True
+        assert result is True
 
         status = get_approval_status("test-reject-1")
         assert status["decision"] == "rejected"
@@ -79,11 +79,11 @@ class TestApprovalDecisions:
 
         # First approval should succeed
         result1 = approve_request("test-double-1")
-        assert result1 == True
+        assert result1 is True
 
         # Second approval should fail
         result2 = approve_request("test-double-1")
-        assert result2 == False
+        assert result2 is False
 
     def test_approve_after_reject_fails(self):
         """Test that approving after rejection fails."""
@@ -92,17 +92,17 @@ class TestApprovalDecisions:
         reject_request("test-reject-then-approve")
         result = approve_request("test-reject-then-approve")
 
-        assert result == False
+        assert result is False
 
     def test_approve_unknown_request(self):
         """Test approving non-existent request."""
         result = approve_request("nonexistent-id")
-        assert result == False
+        assert result is False
 
     def test_reject_unknown_request(self):
         """Test rejecting non-existent request."""
         result = reject_request("nonexistent-id")
-        assert result == False
+        assert result is False
 
 
 class TestApprovalExpiration:
@@ -134,7 +134,7 @@ class TestApprovalExpiration:
             approval["expires_at"] = datetime.now(timezone.utc) - timedelta(seconds=1)
 
         result = approve_request("test-expire-approve")
-        assert result == False
+        assert result is False
 
 
 class TestCleanup:

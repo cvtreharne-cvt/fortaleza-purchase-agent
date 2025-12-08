@@ -21,8 +21,8 @@ from ..core.logging import get_logger
 from ..core.notify import get_pushover_client
 from ..core.secrets import get_secret_manager
 from ..core.config import get_settings, Mode
-from ..core.errors import ThreeDSecureRequired
-from ..core.approval import create_approval_request, get_approval_status
+from ..core.errors import ThreeDSecureRequired, ApprovalRejectedError, ApprovalTimeoutError
+from ..core.approval import create_approval_request, get_approval_status, delete_approval_request
 
 logger = get_logger(__name__)
 
@@ -115,17 +115,12 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
                 # Send Pushover notification with approval request
                 pushover_client = get_pushover_client()
 
-                # Construct approval callback URLs
-                # In production, this should be your Cloud Run URL
-                # Format: https://your-app.run.app/approval/{run_id}/approve
-                webhook_base_url = settings.webhook_base_url if hasattr(settings, 'webhook_base_url') else None
+                # Validate webhook configuration before proceeding
+                settings.validate_webhook_config()
 
-                if not webhook_base_url:
-                    logger.warning("webhook_base_url not configured - using placeholder URLs")
-                    webhook_base_url = "https://your-app.run.app"
-
-                approve_url = f"{webhook_base_url}/approval/{run_id}/approve"
-                reject_url = f"{webhook_base_url}/approval/{run_id}/reject"
+                # Construct approval callback URLs using configured base URL
+                approve_url = f"{settings.webhook_base_url}/approval/{run_id}/approve"
+                reject_url = f"{settings.webhook_base_url}/approval/{run_id}/reject"
 
                 notification_sent = pushover_client.send_approval_request(
                     run_id=run_id,
@@ -136,8 +131,7 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
 
                 if not notification_sent:
                     # Clean up approval request if notification failed
-                    from ..core.approval import _pending_approvals
-                    _pending_approvals.pop(run_id, None)
+                    delete_approval_request(run_id)
                     raise Exception("Failed to send approval notification")
 
                 # Poll for approval
@@ -151,10 +145,10 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
                     logger.info("Purchase approved by human", run_id=run_id)
                 elif approval_status["decision"] == "rejected":
                     logger.warning("Purchase rejected by human", run_id=run_id)
-                    raise Exception("Purchase rejected by human approval")
+                    raise ApprovalRejectedError("Purchase rejected by human approval")
                 elif approval_status["decision"] == "timeout":
                     logger.warning("Approval request timed out", run_id=run_id)
-                    raise Exception("Approval request timed out after 10 minutes")
+                    raise ApprovalTimeoutError(f"Approval request timed out after {APPROVAL_TIMEOUT_MINUTES} minutes")
                 else:
                     logger.error("Unexpected approval status", status=approval_status)
                     raise Exception(f"Unexpected approval status: {approval_status['decision']}")
