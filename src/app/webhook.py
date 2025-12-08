@@ -242,7 +242,7 @@ async def handle_webhook(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@router.post("/approval/{run_id}/approve")
+@router.api_route("/approval/{run_id}/approve", methods=["GET", "POST"])
 async def approve_purchase(run_id: str, request: Request):
     """
     Handle purchase approval callback from Pushover.
@@ -280,7 +280,7 @@ async def approve_purchase(run_id: str, request: Request):
     }
 
 
-@router.post("/approval/{run_id}/reject")
+@router.api_route("/approval/{run_id}/reject", methods=["GET", "POST"])
 async def reject_purchase(run_id: str, request: Request):
     """
     Handle purchase rejection callback from Pushover.
