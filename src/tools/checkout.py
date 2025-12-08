@@ -114,9 +114,24 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
 
                 # Send Pushover notification with approval request
                 pushover_client = get_pushover_client()
+
+                # Construct approval callback URLs
+                # In production, this should be your Cloud Run URL
+                # Format: https://your-app.run.app/approval/{run_id}/approve
+                webhook_base_url = settings.webhook_base_url if hasattr(settings, 'webhook_base_url') else None
+
+                if not webhook_base_url:
+                    logger.warning("webhook_base_url not configured - using placeholder URLs")
+                    webhook_base_url = "https://your-app.run.app"
+
+                approve_url = f"{webhook_base_url}/approval/{run_id}/approve"
+                reject_url = f"{webhook_base_url}/approval/{run_id}/reject"
+
                 notification_sent = pushover_client.send_approval_request(
                     run_id=run_id,
-                    order_summary=order_summary
+                    order_summary=order_summary,
+                    approve_url=approve_url,
+                    reject_url=reject_url
                 )
 
                 if not notification_sent:
