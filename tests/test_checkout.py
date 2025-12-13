@@ -23,6 +23,7 @@ async def test_checkout_complete_flow(checkout_page):
     summary = result["order_summary"]
     
     # Verify all order summary fields are populated
+    assert summary["quantity"] != "unknown", "Quantity should be extracted"
     assert summary["subtotal"] != "unknown", "Subtotal should be extracted"
     assert summary["tax"] != "unknown", "Tax should be extracted"
     assert summary["total"] != "unknown", "Total should be extracted"

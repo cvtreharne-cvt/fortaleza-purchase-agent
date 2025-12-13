@@ -365,9 +365,56 @@ async def _get_order_summary(page: Page, pickup_location: str | None = None) -> 
 
     # Try to get quantity - sum visible item quantities in the order summary
     try:
+        # Shopify checkout exposes line_items with quantity; prefer this if available
+        qty_from_shopify = await page.evaluate(
+            """() => {
+                try {
+                    const li = window.Shopify?.checkout?.line_items || [];
+                    return li.reduce((sum, item) => sum + (item.quantity || 0), 0);
+                } catch (e) {
+                    return null;
+                }
+            }"""
+        )
+        if qty_from_shopify and qty_from_shopify > 0:
+            summary["quantity"] = qty_from_shopify
+
+        # Try to find quantity by looking for "Quantity" label followed by aria-hidden span
+        # This is the pattern used in Shopify checkout pages
+        if summary["quantity"] == "unknown":
+            qty_from_label = await page.evaluate(
+                """() => {
+                    try {
+                        // Find all spans that contain "Quantity" text
+                        const allSpans = Array.from(document.querySelectorAll('span'));
+                        const qtyLabel = allSpans.find(span => span.textContent.trim().toLowerCase() === 'quantity');
+
+                        if (qtyLabel) {
+                            // Look for next sibling with aria-hidden="true"
+                            let nextSibling = qtyLabel.nextElementSibling;
+                            if (nextSibling && nextSibling.tagName === 'SPAN' && nextSibling.getAttribute('aria-hidden') === 'true') {
+                                const qtyText = nextSibling.textContent.trim();
+                                const match = qtyText.match(/\\d+/);
+                                return match ? parseInt(match[0], 10) : null;
+                            }
+                        }
+                        return null;
+                    } catch (e) {
+                        return null;
+                    }
+                }"""
+            )
+
+            if qty_from_label and qty_from_label > 0:
+                summary["quantity"] = qty_from_label
+
         qty_total = 0
         qty_nodes = await page.query_selector_all(
-            ".product__quantity, .order-summary__quantity, [data-checkout-line-item] .quantity, .product-table__quantity, select[data-cartitem-quantity]"
+            ".product__quantity, .order-summary__quantity, [data-checkout-line-item] .quantity, "
+            ".product-table__quantity, select[data-cartitem-quantity], [data-quantity], [data-cart-item-quantity], "
+            "select[aria-label='Quantity'], select[id^='quantity'], select[name*='quantity'], "
+            ".product-thumbnail__quantity, span.product-thumbnail__quantity, span[class*='thumbnail__quantity'], "
+            "span[data-order-summary-section='line-item-quantity']"
         )
         for node in qty_nodes:
             # For select elements, use value attribute; otherwise parse inner text

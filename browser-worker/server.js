@@ -780,9 +780,57 @@ async function getOrderSummary(currentPage, pickupLocation) {
 
   // Quantity: sum item quantities in order summary
   try {
+    // Prefer Shopify checkout line_items if available
+    // Note: This doesn't work on bittersandbottles.com but kept as an opportunistic
+    // first check - it's fast and might work on other Shopify stores
+    const qtyShopify = await currentPage.evaluate(() => {
+      try {
+        const items = window.Shopify?.checkout?.line_items || [];
+        return items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+      } catch (e) {
+        return null;
+      }
+    });
+    if (qtyShopify && qtyShopify > 0) {
+      summary.quantity = qtyShopify;
+    }
+
+    // Try to find quantity by looking for "Quantity" label followed by aria-hidden span
+    // This is the pattern used in Shopify checkout pages
+    if (!summary.quantity || summary.quantity === 'unknown') {
+      const qtyFromLabel = await currentPage.evaluate(() => {
+        try {
+          // Find all spans that contain "Quantity" text
+          const allSpans = Array.from(document.querySelectorAll('span'));
+          const qtyLabel = allSpans.find(span => span.textContent.trim().toLowerCase() === 'quantity');
+
+          if (qtyLabel) {
+            // Look for next sibling with aria-hidden="true"
+            let nextSibling = qtyLabel.nextElementSibling;
+            if (nextSibling && nextSibling.tagName === 'SPAN' && nextSibling.getAttribute('aria-hidden') === 'true') {
+              const qtyText = nextSibling.textContent.trim();
+              const match = qtyText.match(/\d+/);
+              return match ? parseInt(match[0], 10) : null;
+            }
+          }
+          return null;
+        } catch (e) {
+          return null;
+        }
+      });
+
+      if (qtyFromLabel && qtyFromLabel > 0) {
+        summary.quantity = qtyFromLabel;
+      }
+    }
+
     let qtyTotal = 0;
     const qtyNodes = await currentPage.$$(
-      '.product__quantity, .order-summary__quantity, [data-checkout-line-item] .quantity, .product-table__quantity, select[data-cartitem-quantity]',
+      '.product__quantity, .order-summary__quantity, [data-checkout-line-item] .quantity, .product-table__quantity, '
+        + 'select[data-cartitem-quantity], [data-quantity], [data-cart-item-quantity], '
+        + "select[aria-label='Quantity'], select[id^='quantity'], select[name*='quantity'], "
+        + '.product-thumbnail__quantity, span.product-thumbnail__quantity, span[class*="thumbnail__quantity"], '
+        + "span[data-order-summary-section='line-item-quantity']",
     );
     for (const node of qtyNodes) {
       const tag = ((await node.evaluate((el) => el.tagName)) || '').toLowerCase();
