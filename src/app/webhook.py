@@ -2,8 +2,9 @@
 
 import hmac
 import hashlib
+import threading
 import time
-from typing import Set
+from typing import Dict, Set, Tuple
 
 from fastapi import APIRouter, Header, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field
@@ -20,6 +21,15 @@ router = APIRouter()
 # In-memory store for processed event IDs (in production, use Redis or database)
 _processed_events: Set[str] = set()
 
+# Rate limiting for approval endpoints (IP address -> (request_count, window_start_time))
+# Limit: 10 requests per minute per IP
+_rate_limit_store: Dict[str, Tuple[int, float]] = {}
+_rate_limit_lock = threading.Lock()
+RATE_LIMIT_REQUESTS = 10  # Max requests per window
+RATE_LIMIT_WINDOW = 60  # Window duration in seconds
+RATE_LIMIT_CLEANUP_INTERVAL = 300  # Cleanup every 5 minutes
+_last_rate_limit_cleanup = time.time()
+
 
 class WebhookPayload(BaseModel):
     """Webhook payload from Raspberry Pi Gmail monitor."""
@@ -28,6 +38,78 @@ class WebhookPayload(BaseModel):
     subject: str = Field(..., description="Email subject line")
     direct_link: str = Field(..., description="Direct link to product page")
     product_hint: str = Field(..., description="Product name hint from email")
+
+
+def cleanup_rate_limit_store() -> None:
+    """Clean up old entries from rate limit store to prevent memory leak."""
+    global _last_rate_limit_cleanup
+    current_time = time.time()
+
+    # Only cleanup if enough time has passed
+    if current_time - _last_rate_limit_cleanup < RATE_LIMIT_CLEANUP_INTERVAL:
+        return
+
+    with _rate_limit_lock:
+        # Remove entries older than 2x the window duration
+        cutoff_time = current_time - (2 * RATE_LIMIT_WINDOW)
+        ips_to_remove = [
+            ip for ip, (_, window_start) in _rate_limit_store.items()
+            if window_start < cutoff_time
+        ]
+
+        for ip in ips_to_remove:
+            del _rate_limit_store[ip]
+
+        if ips_to_remove:
+            logger.debug("Cleaned up rate limit store", removed_count=len(ips_to_remove))
+
+        _last_rate_limit_cleanup = current_time
+
+
+def check_rate_limit(client_ip: str) -> None:
+    """
+    Check if client has exceeded rate limit for approval endpoints.
+
+    Args:
+        client_ip: Client IP address
+
+    Raises:
+        HTTPException: If rate limit exceeded (429 Too Many Requests)
+    """
+    current_time = time.time()
+
+    # Periodic cleanup to prevent memory leak
+    cleanup_rate_limit_store()
+
+    with _rate_limit_lock:
+        # Get existing rate limit data or initialize new entry
+        if client_ip not in _rate_limit_store:
+            _rate_limit_store[client_ip] = (0, current_time)
+
+        request_count, window_start = _rate_limit_store[client_ip]
+
+        # Check if we're in a new window
+        if current_time - window_start > RATE_LIMIT_WINDOW:
+            # Reset counter for new window
+            _rate_limit_store[client_ip] = (1, current_time)
+            return
+
+        # Check if limit exceeded
+        if request_count >= RATE_LIMIT_REQUESTS:
+            logger.warning(
+                "Rate limit exceeded for approval endpoint",
+                client_ip=client_ip,
+                requests=request_count,
+                window=RATE_LIMIT_WINDOW
+            )
+            raise HTTPException(
+                status_code=429,
+                detail=f"Rate limit exceeded. Max {RATE_LIMIT_REQUESTS} requests per {RATE_LIMIT_WINDOW} seconds.",
+                headers={"Retry-After": str(int(RATE_LIMIT_WINDOW - (current_time - window_start)))}
+            )
+
+        # Increment counter
+        _rate_limit_store[client_ip] = (request_count + 1, window_start)
 
 
 def verify_hmac_signature(
@@ -192,3 +274,112 @@ async def handle_webhook(
             event_id=payload.event_id
         )
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.api_route("/approval/{run_id}/approve", methods=["GET", "POST"])
+async def approve_purchase(run_id: str, request: Request):
+    """
+    Handle purchase approval callback from Pushover.
+
+    Args:
+        run_id: Unique identifier for the agent run
+        request: FastAPI request object (for rate limiting)
+
+    Returns:
+        Approval status and details
+    """
+    # Rate limiting (prevent brute force attacks on run_id)
+    client_ip = request.client.host if request.client else "unknown"
+    check_rate_limit(client_ip)
+
+    from ..core.approval import approve_request, get_approval_status
+
+    success = approve_request(run_id)
+
+    if not success:
+        approval = get_approval_status(run_id)
+        if not approval:
+            logger.warning("Approval attempt for unknown run_id", run_id=run_id)
+            raise HTTPException(status_code=404, detail=f"Approval request {run_id} not found")
+        else:
+            logger.warning("Approval attempt failed", run_id=run_id, reason="expired or already decided")
+            raise HTTPException(status_code=400, detail="Approval request expired or already decided")
+
+    logger.info("Purchase approved via callback", run_id=run_id)
+
+    return {
+        "status": "approved",
+        "run_id": run_id,
+        "message": "Purchase approved successfully"
+    }
+
+
+@router.api_route("/approval/{run_id}/reject", methods=["GET", "POST"])
+async def reject_purchase(run_id: str, request: Request):
+    """
+    Handle purchase rejection callback from Pushover.
+
+    Args:
+        run_id: Unique identifier for the agent run
+        request: FastAPI request object (for rate limiting)
+
+    Returns:
+        Rejection status and details
+    """
+    # Rate limiting (prevent brute force attacks on run_id)
+    client_ip = request.client.host if request.client else "unknown"
+    check_rate_limit(client_ip)
+
+    from ..core.approval import reject_request, get_approval_status
+
+    success = reject_request(run_id)
+
+    if not success:
+        approval = get_approval_status(run_id)
+        if not approval:
+            logger.warning("Rejection attempt for unknown run_id", run_id=run_id)
+            raise HTTPException(status_code=404, detail=f"Approval request {run_id} not found")
+        else:
+            logger.warning("Rejection attempt failed", run_id=run_id, reason="expired or already decided")
+            raise HTTPException(status_code=400, detail="Approval request expired or already decided")
+
+    logger.info("Purchase rejected via callback", run_id=run_id)
+
+    return {
+        "status": "rejected",
+        "run_id": run_id,
+        "message": "Purchase rejected successfully"
+    }
+
+
+@router.get("/approval/{run_id}/status")
+async def get_approval_status_endpoint(run_id: str, request: Request):
+    """
+    Get current status of an approval request.
+
+    Args:
+        run_id: Unique identifier for the agent run
+        request: FastAPI request object (for rate limiting)
+
+    Returns:
+        Current approval status
+    """
+    # Rate limiting (prevent brute force attacks on run_id)
+    client_ip = request.client.host if request.client else "unknown"
+    check_rate_limit(client_ip)
+
+    from ..core.approval import get_approval_status
+
+    approval = get_approval_status(run_id)
+
+    if not approval:
+        raise HTTPException(status_code=404, detail=f"Approval request {run_id} not found")
+
+    return {
+        "run_id": run_id,
+        "status": approval["status"],
+        "decision": approval["decision"],
+        "created_at": approval["created_at"].isoformat(),
+        "expires_at": approval["expires_at"].isoformat(),
+        "decided_at": approval["decided_at"].isoformat() if approval["decided_at"] else None
+    }

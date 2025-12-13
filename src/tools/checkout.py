@@ -13,13 +13,16 @@ The checkout process supports dryrun mode for testing without actual purchases,
 and includes detection for 3D Secure challenges that require manual intervention.
 """
 
+import asyncio
+import time
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
 from ..core.logging import get_logger
-from ..core.notify import send_notification
+from ..core.notify import get_pushover_client
 from ..core.secrets import get_secret_manager
 from ..core.config import get_settings, Mode
-from ..core.errors import ThreeDSecureRequired
+from ..core.errors import ThreeDSecureRequired, ApprovalRejectedError, ApprovalTimeoutError
+from ..core.approval import create_approval_request, get_approval_status, delete_approval_request
 
 logger = get_logger(__name__)
 
@@ -37,38 +40,44 @@ ORDER_SUBMISSION_DELAY = 5000  # Wait time after clicking Pay now
 SECURE_CHECK_TIMEOUT = 2000  # Timeout for 3D Secure detection
 ERROR_CHECK_TIMEOUT = 2000  # Timeout for payment error detection
 
+# Approval polling constants
+APPROVAL_TIMEOUT_MINUTES = 10  # Total time to wait for human approval
+APPROVAL_POLL_INTERVAL_SECONDS = 2  # How often to check approval status
 
-async def checkout_and_pay(page: Page, submit_order: bool = None) -> dict:
+
+async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = None) -> dict:
     """
     Complete checkout process with payment information.
-    
+
     This function:
     - Verifies we're on checkout page
     - Selects "Pick up" as the Delivery method
     - Selects pickup location (South SF preferred, SF fallback)
     - Fills in credit card information
     - Fills in cardholder name
-    - Optionally submits the order (based on mode)
-    
+    - Requests human approval (if submitting order)
+    - Optionally submits the order (based on mode and approval)
+
     Args:
         page: Playwright page (should be on checkout page)
         submit_order: If True, submits order. If None, uses mode setting
                      (dryrun/test=False, prod=True)
-        
+        run_id: Unique identifier for this agent run (required for approval)
+
     Returns:
         dict with status, message, and order details
-        
+
     Raises:
         ThreeDSecureRequired: If 3D Secure verification is needed
-        Exception: For other failures
+        Exception: For other failures (including approval rejection/timeout)
     """
     settings = get_settings()
-    
+
     # Determine if we should submit based on mode
     if submit_order is None:
         submit_order = settings.mode == Mode.PROD
-    
-    logger.info("Starting checkout process", submit_order=submit_order, mode=settings.mode.value)
+
+    logger.info("Starting checkout process", submit_order=submit_order, mode=settings.mode.value, run_id=run_id)
     
     try:
         # Verify we're on checkout page
@@ -92,10 +101,64 @@ async def checkout_and_pay(page: Page, submit_order: bool = None) -> dict:
         logger.info("Order summary", **order_summary)
         
         if submit_order:
+            # Request human approval before submitting
+            if run_id:
+                logger.info("Requesting human approval for purchase", run_id=run_id)
+
+                # Create approval request
+                create_approval_request(
+                    run_id=run_id,
+                    order_summary=order_summary,
+                    timeout_minutes=APPROVAL_TIMEOUT_MINUTES
+                )
+
+                # Send Pushover notification with approval request
+                pushover_client = get_pushover_client()
+
+                # Validate webhook configuration before proceeding
+                settings.validate_webhook_config()
+
+                # Construct approval callback URLs using configured base URL
+                approve_url = f"{settings.webhook_base_url}/approval/{run_id}/approve"
+                reject_url = f"{settings.webhook_base_url}/approval/{run_id}/reject"
+
+                notification_sent = pushover_client.send_approval_request(
+                    run_id=run_id,
+                    order_summary=order_summary,
+                    approve_url=approve_url,
+                    reject_url=reject_url
+                )
+
+                if not notification_sent:
+                    # Clean up approval request if notification failed
+                    delete_approval_request(run_id)
+                    raise Exception("Failed to send approval notification")
+
+                # Poll for approval
+                logger.info("Polling for approval decision",
+                           timeout_minutes=APPROVAL_TIMEOUT_MINUTES,
+                           poll_interval_seconds=APPROVAL_POLL_INTERVAL_SECONDS)
+
+                approval_status = await _poll_for_approval(run_id)
+
+                if approval_status["decision"] == "approved":
+                    logger.info("Purchase approved by human", run_id=run_id)
+                elif approval_status["decision"] == "rejected":
+                    logger.warning("Purchase rejected by human", run_id=run_id)
+                    raise ApprovalRejectedError("Purchase rejected by human approval")
+                elif approval_status["decision"] == "timeout":
+                    logger.warning("Approval request timed out", run_id=run_id)
+                    raise ApprovalTimeoutError(f"Approval request timed out after {APPROVAL_TIMEOUT_MINUTES} minutes")
+                else:
+                    logger.error("Unexpected approval status", status=approval_status)
+                    raise Exception(f"Unexpected approval status: {approval_status['decision']}")
+            else:
+                logger.warning("No run_id provided - skipping approval (not recommended for production)")
+
             # Submit the order
             logger.info("Submitting order for real")
             result = await _submit_order(page)
-            
+
             return {
                 "status": "success",
                 "message": "Order submitted successfully",
@@ -123,6 +186,58 @@ async def checkout_and_pay(page: Page, submit_order: bool = None) -> dict:
     except Exception as e:
         logger.error("Checkout failed", error=str(e))
         raise
+
+
+async def _poll_for_approval(run_id: str) -> dict:
+    """
+    Poll for human approval decision.
+
+    Polls the approval status every APPROVAL_POLL_INTERVAL_SECONDS
+    for up to APPROVAL_TIMEOUT_MINUTES.
+
+    Args:
+        run_id: Unique identifier for this approval request
+
+    Returns:
+        dict with approval status (includes 'decision' field)
+
+    Raises:
+        Exception: If approval request not found or polling fails
+    """
+    timeout_seconds = APPROVAL_TIMEOUT_MINUTES * 60
+    poll_count = 0
+    max_polls = timeout_seconds // APPROVAL_POLL_INTERVAL_SECONDS
+
+    while poll_count < max_polls:
+        approval_status = get_approval_status(run_id)
+
+        if not approval_status:
+            raise Exception(f"Approval request {run_id} not found")
+
+        # Check if decision has been made
+        if approval_status["decision"] is not None:
+            logger.info("Approval decision received",
+                       run_id=run_id,
+                       decision=approval_status["decision"],
+                       polls=poll_count)
+            return approval_status
+
+        # Wait before next poll
+        await asyncio.sleep(APPROVAL_POLL_INTERVAL_SECONDS)
+        poll_count += 1
+
+        if poll_count % 30 == 0:  # Log every minute
+            logger.debug("Still waiting for approval",
+                        run_id=run_id,
+                        elapsed_minutes=poll_count * APPROVAL_POLL_INTERVAL_SECONDS / 60)
+
+    # Timeout reached - check one final time
+    final_status = get_approval_status(run_id)
+    if final_status and final_status["decision"] is not None:
+        return final_status
+
+    logger.warning("Approval polling timed out", run_id=run_id)
+    raise Exception(f"Approval polling timed out after {APPROVAL_TIMEOUT_MINUTES} minutes")
 
 
 async def _verify_pickup_selected(page: Page) -> None:

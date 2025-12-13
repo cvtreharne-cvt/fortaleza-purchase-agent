@@ -104,3 +104,18 @@ class ConfigurationError(AgentError):
 class SecretNotFoundError(AgentError):
     """Secret not found in Secret Manager."""
     pass
+
+
+class ApprovalError(AgentError):
+    """Base exception for approval-related errors."""
+    pass
+
+
+class ApprovalRejectedError(ApprovalError):
+    """Purchase was rejected by human approval."""
+    pass
+
+
+class ApprovalTimeoutError(ApprovalError):
+    """Approval request timed out waiting for human response."""
+    pass

@@ -80,7 +80,8 @@ class Settings(BaseSettings):
 
     # Webhook Configuration
     webhook_timestamp_tolerance: int = Field(default=300, description="Webhook timestamp tolerance in seconds")
-    
+    webhook_base_url: Optional[str] = Field(default=None, description="Base URL for approval callback webhooks (required for production)")
+
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
     json_logs: bool = Field(default=True, description="Use JSON logging format")
@@ -107,6 +108,15 @@ class Settings(BaseSettings):
             raise ConfigurationError(
                 "Production mode requires CONFIRM_PROD=YES. "
                 "This is a safety measure to prevent accidental purchases."
+            )
+
+    def validate_webhook_config(self):
+        """Validate that webhook_base_url is configured for order submission."""
+        if not self.webhook_base_url:
+            raise ConfigurationError(
+                "webhook_base_url must be configured when submitting orders with approval. "
+                "Set WEBHOOK_BASE_URL environment variable to your Cloud Run URL "
+                "(e.g., https://your-app.run.app)"
             )
     
     def is_cloud_environment(self) -> bool:
