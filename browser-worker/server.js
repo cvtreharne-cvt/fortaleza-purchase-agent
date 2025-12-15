@@ -7,7 +7,8 @@ const fs = require('fs');
 const PORT = process.env.PORT || 3001;
 const HEADLESS = process.env.HEADLESS !== 'false';
 const CHROME_PATH = process.env.CHROME_PATH || process.env.PLAYWRIGHT_CHROMIUM_PATH;
-const WORKER_AUTH_TOKEN = process.env.WORKER_AUTH_TOKEN; // Optional authentication token
+const WORKER_AUTH_TOKEN = process.env.WORKER_AUTH_TOKEN;
+const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // Validate CHROME_PATH if set
 if (CHROME_PATH) {
@@ -19,6 +20,50 @@ if (CHROME_PATH) {
   console.log(`Using Chrome at: ${CHROME_PATH}`);
 } else {
   console.log('Using Playwright bundled Chromium');
+}
+
+// CRITICAL SECURITY: Require authentication token in production
+if (NODE_ENV === 'production' && !WORKER_AUTH_TOKEN) {
+  console.error('');
+  console.error('═══════════════════════════════════════════════════════════');
+  console.error('FATAL ERROR: WORKER_AUTH_TOKEN is required in production');
+  console.error('═══════════════════════════════════════════════════════════');
+  console.error('');
+  console.error('The browser worker controls payment processing and must be');
+  console.error('protected with authentication in production environments.');
+  console.error('');
+  console.error('Generate a secure token:');
+  console.error('  openssl rand -hex 32');
+  console.error('');
+  console.error('Then set the environment variable:');
+  console.error('  export WORKER_AUTH_TOKEN="your-generated-token"');
+  console.error('');
+  process.exit(1);
+}
+
+// Validate token strength if authentication is enabled
+if (WORKER_AUTH_TOKEN) {
+  if (WORKER_AUTH_TOKEN.length < 32) {
+    console.error('');
+    console.error('═══════════════════════════════════════════════════════════');
+    console.error('FATAL ERROR: WORKER_AUTH_TOKEN is too weak');
+    console.error('═══════════════════════════════════════════════════════════');
+    console.error('');
+    console.error(`Token length: ${WORKER_AUTH_TOKEN.length} characters`);
+    console.error('Required: At least 32 characters');
+    console.error('');
+    console.error('Generate a secure token:');
+    console.error('  openssl rand -hex 32');
+    console.error('');
+    process.exit(1);
+  }
+  console.log('✓ Authentication enabled with bearer token');
+} else {
+  console.warn('');
+  console.warn('⚠ WARNING: Running without authentication');
+  console.warn('⚠ This is ONLY safe for local development');
+  console.warn('⚠ NEVER deploy to production without WORKER_AUTH_TOKEN');
+  console.warn('');
 }
 
 // Timeouts (ms)

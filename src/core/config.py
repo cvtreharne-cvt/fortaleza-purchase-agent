@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     navigation_timeout: int = Field(default=NAVIGATION_TIMEOUT_DEFAULT, description="Navigation timeout in milliseconds (30s default, set to 120000 for Cloud Run)")
     browser_worker_url: Optional[str] = Field(default=None, description="Browser worker base URL (enables Node Playwright worker)")
     browser_worker_timeout: int = Field(default=60.0, description="HTTP timeout (seconds) for browser worker requests")
+    browser_worker_auth_token: Optional[str] = Field(default=None, description="Authentication token for browser worker API (required for production)")
     
     # Retry Configuration
     max_retries: int = Field(default=3, description="Maximum retry attempts")
@@ -129,7 +130,7 @@ class Settings(BaseSettings):
         """Redact sensitive fields in repr."""
         safe_dict = {}
         for key, value in self.model_dump().items():
-            if any(sensitive in key.lower() for sensitive in ["password", "secret", "key", "token", "cc_", "cvv"]):
+            if any(sensitive in key.lower() for sensitive in ["password", "secret", "key", "token", "cc_", "cvv", "auth"]):
                 safe_dict[key] = "***REDACTED***"
             else:
                 safe_dict[key] = value

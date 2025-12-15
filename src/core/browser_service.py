@@ -68,8 +68,19 @@ async def _post_json(endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     safe_payload = _redact_sensitive(payload)
     logger.debug(f"Browser worker request: {endpoint}", payload=safe_payload)
 
+    # Prepare headers with authentication token
+    headers = {}
+    if settings.browser_worker_auth_token:
+        headers["Authorization"] = f"Bearer {settings.browser_worker_auth_token}"
+    elif settings.mode == Mode.PROD:
+        raise ConfigurationError(
+            "BROWSER_WORKER_AUTH_TOKEN is required in production mode. "
+            "Set this environment variable to authenticate with the browser worker. "
+            "Generate a secure token: openssl rand -hex 32"
+        )
+
     async with httpx.AsyncClient(timeout=settings.browser_worker_timeout) as client:
-        resp = await client.post(url, json=payload)
+        resp = await client.post(url, json=payload, headers=headers)
         data = resp.json()
         if resp.status_code >= 400:
             message = data.get("message", f"Browser worker error {resp.status_code}")
