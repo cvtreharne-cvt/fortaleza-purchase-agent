@@ -497,6 +497,7 @@ async def run_purchase_agent(
                 model=Gemini(
                     model=AGENT_MODEL,
                     retry_config=retry_config,
+                    api_key=settings.google_api_key,
                 ),
                 description="AI agent that autonomously purchases products from Bitters & Bottles Spirit Shop.",
                 instruction=SYSTEM_INSTRUCTION,
@@ -608,6 +609,7 @@ if os.getenv("GOOGLE_API_KEY"):
         model=Gemini(
             model=AGENT_MODEL,
             retry_config=retry_config,
+            api_key=os.getenv("GOOGLE_API_KEY"),
         ),
         description="AI agent that autonomously purchases products from Bitters & Bottles Spirit Shop.",
         instruction=SYSTEM_INSTRUCTION,

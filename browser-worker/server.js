@@ -4,8 +4,7 @@ const { chromium } = require('playwright');
 // Environment
 const PORT = process.env.PORT || 3001;
 const HEADLESS = process.env.HEADLESS !== 'false';
-const CHROME_PATH =
-  process.env.CHROME_PATH || process.env.PLAYWRIGHT_CHROMIUM_PATH || '/usr/bin/chromium-browser';
+const CHROME_PATH = process.env.CHROME_PATH || process.env.PLAYWRIGHT_CHROMIUM_PATH;
 
 // Timeouts (ms)
 const DEFAULT_TIMEOUT = 60000;
@@ -26,11 +25,18 @@ app.use(express.json({ limit: '1mb' }));
 async function ensurePage() {
   if (page) return page;
 
-  browser = await chromium.launch({
+  const launchOptions = {
     headless: HEADLESS,
-    executablePath: CHROME_PATH,
     args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-  });
+  };
+
+  // Only set executablePath if CHROME_PATH is explicitly provided
+  // This allows Playwright to use its default bundled Chromium on Mac
+  if (CHROME_PATH) {
+    launchOptions.executablePath = CHROME_PATH;
+  }
+
+  browser = await chromium.launch(launchOptions);
 
   context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
