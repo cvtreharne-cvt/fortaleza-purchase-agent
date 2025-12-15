@@ -1,26 +1,86 @@
 const express = require('express');
 const { chromium } = require('playwright');
+const rateLimit = require('express-rate-limit');
+const fs = require('fs');
 
 // Environment
 const PORT = process.env.PORT || 3001;
 const HEADLESS = process.env.HEADLESS !== 'false';
 const CHROME_PATH = process.env.CHROME_PATH || process.env.PLAYWRIGHT_CHROMIUM_PATH;
+const WORKER_AUTH_TOKEN = process.env.WORKER_AUTH_TOKEN; // Optional authentication token
+
+// Validate CHROME_PATH if set
+if (CHROME_PATH) {
+  if (!fs.existsSync(CHROME_PATH)) {
+    console.error(`ERROR: CHROME_PATH is set but the file does not exist: ${CHROME_PATH}`);
+    console.error('Please verify the path or unset CHROME_PATH to use Playwright bundled Chromium.');
+    process.exit(1);
+  }
+  console.log(`Using Chrome at: ${CHROME_PATH}`);
+} else {
+  console.log('Using Playwright bundled Chromium');
+}
 
 // Timeouts (ms)
 const DEFAULT_TIMEOUT = 60000;
 const NAVIGATION_TIMEOUT = parseInt(process.env.NAVIGATION_TIMEOUT || `${DEFAULT_TIMEOUT}`, 10);
 const SELECTOR_TIMEOUT = 3000;
 const SHORT_TIMEOUT = 1000;
+const MEDIUM_TIMEOUT = 2000;
+const AGE_VERIFICATION_TIMEOUT = 5000;
 const CART_DRAWER_TIMEOUT = 5000;
 const ORDER_SUBMISSION_DELAY = 5000;
 const TRACKING_REDIRECT_WAIT_MS = 5000;
+const AGE_GATE_HIDE_TIMEOUT = 10000;
+const CARD_FIELD_INITIAL_DELAY = 200;
+const CARD_FIELD_TRANSITION_DELAY = 500;
+const TYPING_DELAY = 30;
 
 let browser;
 let context;
 let page;
 
 const app = express();
+
+// Rate limiting: 100 requests per 15 minutes per IP
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: { status: 'error', message: 'Too many requests, please try again later.', error_type: 'RateLimitExceeded' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(limiter);
 app.use(express.json({ limit: '1mb' }));
+
+// Authentication middleware (optional - only if WORKER_AUTH_TOKEN is set)
+function authMiddleware(req, res, next) {
+  // Skip auth check for health endpoint
+  if (req.path === '/health') {
+    return next();
+  }
+
+  // If no token is configured, allow all requests
+  if (!WORKER_AUTH_TOKEN) {
+    return next();
+  }
+
+  // Check Authorization header
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return jsonError(res, 401, 'Missing or invalid authorization header', 'AuthenticationRequired');
+  }
+
+  const token = authHeader.substring(7); // Remove 'Bearer ' prefix
+  if (token !== WORKER_AUTH_TOKEN) {
+    return jsonError(res, 403, 'Invalid authentication token', 'AuthenticationFailed');
+  }
+
+  next();
+}
+
+app.use(authMiddleware);
 
 async function ensurePage() {
   if (page) return page;
@@ -60,7 +120,7 @@ async function resetBrowser() {
   page = null;
 }
 
-function jsonError(res, statusCode, message, errorType) {
+function jsonError(res, statusCode, message, errorType = 'BrowserWorkerError') {
   res.status(statusCode).json({ status: 'error', message, error_type: errorType });
 }
 
@@ -87,7 +147,7 @@ async function handleAgeVerification(currentPage, dob) {
   let matched;
   for (const selector of overlaySelectors) {
     try {
-      overlay = await currentPage.waitForSelector(selector, { timeout: 5000 });
+      overlay = await currentPage.waitForSelector(selector, { timeout: AGE_VERIFICATION_TIMEOUT });
       if (overlay) {
         matched = selector;
         break;
@@ -116,10 +176,10 @@ async function handleAgeVerification(currentPage, dob) {
 
   for (const selector of buttons) {
     try {
-      const button = await currentPage.waitForSelector(selector, { timeout: 2000 });
+      const button = await currentPage.waitForSelector(selector, { timeout: MEDIUM_TIMEOUT });
       if (button) {
         await button.click();
-        await currentPage.waitForSelector(matched, { state: 'hidden', timeout: 10000 });
+        await currentPage.waitForSelector(matched, { state: 'hidden', timeout: AGE_GATE_HIDE_TIMEOUT });
         return { status: 'success', message: 'Age verification completed (button)' };
       }
     } catch (_) {
@@ -172,10 +232,10 @@ async function handleAgeVerification(currentPage, dob) {
 
   for (const selector of submitSelectors) {
     try {
-      const submit = await currentPage.waitForSelector(selector, { timeout: 2000 });
+      const submit = await currentPage.waitForSelector(selector, { timeout: MEDIUM_TIMEOUT });
       if (submit) {
         await submit.click();
-        await currentPage.waitForSelector(matched, { state: 'hidden', timeout: 10000 });
+        await currentPage.waitForSelector(matched, { state: 'hidden', timeout: AGE_GATE_HIDE_TIMEOUT });
         return { status: 'success', message: 'Age verification completed' };
       }
     } catch (_) {
@@ -225,7 +285,7 @@ async function searchForProduct(currentPage, productName, dob) {
   let searchButton;
   for (const selector of searchSelectors) {
     try {
-      searchButton = await currentPage.waitForSelector(selector, { timeout: 2000 });
+      searchButton = await currentPage.waitForSelector(selector, { timeout: MEDIUM_TIMEOUT });
       if (searchButton) break;
     } catch (_) {
       // continue
@@ -257,7 +317,7 @@ async function searchForProduct(currentPage, productName, dob) {
   if (!productLink) {
     await searchInput.press('Enter');
     await currentPage.waitForLoadState('domcontentloaded');
-    await currentPage.waitForTimeout(2000);
+    await currentPage.waitForTimeout(MEDIUM_TIMEOUT);
 
     const parts = slug.split('-');
     const resultSelectors = [
@@ -678,7 +738,7 @@ async function verifyPickupSelected(currentPage) {
       const el = await currentPage.waitForSelector(selector, { timeout: SELECTOR_TIMEOUT });
       if (el) {
         await el.click();
-        await currentPage.waitForTimeout(1000);
+        await currentPage.waitForTimeout(SHORT_TIMEOUT);
         return;
       }
     } catch (_) {}
@@ -696,7 +756,7 @@ async function detectPickupLocation(currentPage) {
 
   for (const selector of selectors) {
     try {
-      const el = await currentPage.waitForSelector(selector, { timeout: 2000 });
+      const el = await currentPage.waitForSelector(selector, { timeout: MEDIUM_TIMEOUT });
       if (el) {
         const text = await el.innerText();
         return text.split('\\n')[0].trim().slice(0, 50);
@@ -718,32 +778,127 @@ async function fillPayment(currentPage, paymentInfo) {
   const paymentSection = await currentPage.$('text=/Payment/i');
   if (paymentSection) {
     await paymentSection.scrollIntoViewIfNeeded();
-    await currentPage.waitForTimeout(1000);
+    await currentPage.waitForTimeout(SHORT_TIMEOUT);
   }
 
   const cardIframe = await currentPage.waitForSelector(
     "iframe[title*='Field container for: Card number' i], iframe[name*='number' i]",
-    { timeout: 5000 },
+    { timeout: AGE_VERIFICATION_TIMEOUT },
   );
   if (!cardIframe) throw new Error('Card number iframe not found');
   const cardFrame = await cardIframe.contentFrame();
-  const cardInput = await cardFrame.waitForSelector('input', { timeout: 5000 });
+  const cardInput = await cardFrame.waitForSelector('input', { timeout: AGE_VERIFICATION_TIMEOUT });
   await cardInput.click({ force: true });
-  await currentPage.waitForTimeout(200);
-  await cardInput.type(ccNumber, { delay: 30 });
+  await currentPage.waitForTimeout(CARD_FIELD_INITIAL_DELAY);
+  await cardInput.type(ccNumber, { delay: TYPING_DELAY });
   await cardInput.press('Tab');
-  await currentPage.waitForTimeout(500);
+  await currentPage.waitForTimeout(CARD_FIELD_TRANSITION_DELAY);
 
   const expValue = `${ccExpMonth.toString().padStart(2, '0')}${ccExpYear.toString().slice(-2)}`;
-  await currentPage.keyboard.type(expValue, { delay: 30 });
+  await currentPage.keyboard.type(expValue, { delay: TYPING_DELAY });
   await currentPage.keyboard.press('Tab');
-  await currentPage.waitForTimeout(500);
+  await currentPage.waitForTimeout(CARD_FIELD_TRANSITION_DELAY);
 
-  await currentPage.keyboard.type(ccCvv, { delay: 30 });
+  await currentPage.keyboard.type(ccCvv, { delay: TYPING_DELAY });
   await currentPage.keyboard.press('Tab');
-  await currentPage.waitForTimeout(500);
+  await currentPage.waitForTimeout(CARD_FIELD_TRANSITION_DELAY);
 
-  await currentPage.keyboard.type(billingName, { delay: 30 });
+  await currentPage.keyboard.type(billingName, { delay: TYPING_DELAY });
+}
+
+/**
+ * Extract order quantity from checkout page using multiple strategies.
+ *
+ * Strategy 1: Shopify checkout line_items API (window.Shopify.checkout.line_items)
+ * Strategy 2: "Quantity" label with aria-hidden sibling (common Shopify pattern)
+ * Strategy 3: DOM element selectors (quantity fields, spans, etc.)
+ *
+ * @param {Page} currentPage - Playwright page object
+ * @returns {Promise<number|string>} Quantity as number, or 'unknown' if not found
+ */
+async function extractOrderQuantity(currentPage) {
+  try {
+    // Strategy 1: Prefer Shopify checkout line_items if available
+    // Note: This doesn't work on bittersandbottles.com but kept as an opportunistic
+    // first check - it's fast and might work on other Shopify stores
+    const qtyShopify = await currentPage.evaluate(() => {
+      try {
+        const items = window.Shopify?.checkout?.line_items || [];
+        return items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+      } catch (e) {
+        return null;
+      }
+    });
+    if (qtyShopify && qtyShopify > 0) {
+      return qtyShopify;
+    }
+
+    // Strategy 2: Try to find quantity by looking for "Quantity" label followed by aria-hidden span
+    // This is the pattern used in Shopify checkout pages
+    const qtyFromLabel = await currentPage.evaluate(() => {
+      try {
+        // Find all spans that contain "Quantity" text
+        const allSpans = Array.from(document.querySelectorAll('span'));
+        const qtyLabel = allSpans.find(span => span.textContent.trim().toLowerCase() === 'quantity');
+
+        if (qtyLabel) {
+          // Look for next sibling with aria-hidden="true"
+          let nextSibling = qtyLabel.nextElementSibling;
+          if (nextSibling && nextSibling.tagName === 'SPAN' && nextSibling.getAttribute('aria-hidden') === 'true') {
+            const qtyText = nextSibling.textContent.trim();
+            const match = qtyText.match(/\d+/);
+            return match ? parseInt(match[0], 10) : null;
+          }
+        }
+        return null;
+      } catch (e) {
+        return null;
+      }
+    });
+
+    if (qtyFromLabel && qtyFromLabel > 0) {
+      return qtyFromLabel;
+    }
+
+    // Strategy 3: Fall back to DOM element selectors
+    let qtyTotal = 0;
+    const qtyNodes = await currentPage.$$(
+      '.product__quantity, .order-summary__quantity, [data-checkout-line-item] .quantity, .product-table__quantity, '
+        + 'select[data-cartitem-quantity], [data-quantity], [data-cart-item-quantity], '
+        + "select[aria-label='Quantity'], select[id^='quantity'], select[name*='quantity'], "
+        + '.product-thumbnail__quantity, span.product-thumbnail__quantity, span[class*="thumbnail__quantity"], '
+        + "span[data-order-summary-section='line-item-quantity']",
+    );
+
+    for (const node of qtyNodes) {
+      const tag = ((await node.evaluate((el) => el.tagName)) || '').toLowerCase();
+      if (tag === 'select') {
+        const val = await node.getAttribute('value');
+        if (val && /^\d+$/.test(val)) {
+          qtyTotal += parseInt(val, 10);
+        } else {
+          const opt = await node.$('option:checked');
+          if (opt) {
+            const optText = ((await opt.innerText()) || '').trim();
+            const digitsOpt = optText.replace(/[^0-9]/g, '');
+            if (digitsOpt) qtyTotal += parseInt(digitsOpt, 10);
+          }
+        }
+      } else {
+        const text = ((await node.innerText()) || '').trim();
+        const digits = text.replace(/[^0-9]/g, '');
+        if (digits) qtyTotal += parseInt(digits, 10);
+      }
+    }
+
+    if (qtyTotal > 0) {
+      return qtyTotal;
+    }
+  } catch (_) {
+    // Ignore errors and return 'unknown'
+  }
+
+  return 'unknown';
 }
 
 async function getOrderSummary(currentPage, pickupLocation) {
@@ -784,82 +939,8 @@ async function getOrderSummary(currentPage, pickupLocation) {
     }
   } catch (_) {}
 
-  // Quantity: sum item quantities in order summary
-  try {
-    // Prefer Shopify checkout line_items if available
-    // Note: This doesn't work on bittersandbottles.com but kept as an opportunistic
-    // first check - it's fast and might work on other Shopify stores
-    const qtyShopify = await currentPage.evaluate(() => {
-      try {
-        const items = window.Shopify?.checkout?.line_items || [];
-        return items.reduce((sum, item) => sum + (item.quantity || 0), 0);
-      } catch (e) {
-        return null;
-      }
-    });
-    if (qtyShopify && qtyShopify > 0) {
-      summary.quantity = qtyShopify;
-    }
-
-    // Try to find quantity by looking for "Quantity" label followed by aria-hidden span
-    // This is the pattern used in Shopify checkout pages
-    if (!summary.quantity || summary.quantity === 'unknown') {
-      const qtyFromLabel = await currentPage.evaluate(() => {
-        try {
-          // Find all spans that contain "Quantity" text
-          const allSpans = Array.from(document.querySelectorAll('span'));
-          const qtyLabel = allSpans.find(span => span.textContent.trim().toLowerCase() === 'quantity');
-
-          if (qtyLabel) {
-            // Look for next sibling with aria-hidden="true"
-            let nextSibling = qtyLabel.nextElementSibling;
-            if (nextSibling && nextSibling.tagName === 'SPAN' && nextSibling.getAttribute('aria-hidden') === 'true') {
-              const qtyText = nextSibling.textContent.trim();
-              const match = qtyText.match(/\d+/);
-              return match ? parseInt(match[0], 10) : null;
-            }
-          }
-          return null;
-        } catch (e) {
-          return null;
-        }
-      });
-
-      if (qtyFromLabel && qtyFromLabel > 0) {
-        summary.quantity = qtyFromLabel;
-      }
-    }
-
-    let qtyTotal = 0;
-    const qtyNodes = await currentPage.$$(
-      '.product__quantity, .order-summary__quantity, [data-checkout-line-item] .quantity, .product-table__quantity, '
-        + 'select[data-cartitem-quantity], [data-quantity], [data-cart-item-quantity], '
-        + "select[aria-label='Quantity'], select[id^='quantity'], select[name*='quantity'], "
-        + '.product-thumbnail__quantity, span.product-thumbnail__quantity, span[class*="thumbnail__quantity"], '
-        + "span[data-order-summary-section='line-item-quantity']",
-    );
-    for (const node of qtyNodes) {
-      const tag = ((await node.evaluate((el) => el.tagName)) || '').toLowerCase();
-      if (tag === 'select') {
-        const val = await node.getAttribute('value');
-        if (val && /^\d+$/.test(val)) {
-          qtyTotal += parseInt(val, 10);
-        } else {
-          const opt = await node.$('option:checked');
-          if (opt) {
-            const optText = ((await opt.innerText()) || '').trim();
-            const digitsOpt = optText.replace(/[^0-9]/g, '');
-            if (digitsOpt) qtyTotal += parseInt(digitsOpt, 10);
-          }
-        }
-      } else {
-        const text = ((await node.innerText()) || '').trim();
-        const digits = text.replace(/[^0-9]/g, '');
-        if (digits) qtyTotal += parseInt(digits, 10);
-      }
-    }
-    if (qtyTotal > 0) summary.quantity = qtyTotal;
-  } catch (_) {}
+  // Extract quantity using dedicated function with multiple strategies
+  summary.quantity = await extractOrderQuantity(currentPage);
 
   return summary;
 }

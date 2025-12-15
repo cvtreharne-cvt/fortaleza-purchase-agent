@@ -15,6 +15,7 @@ and includes detection for 3D Secure challenges that require manual intervention
 
 import asyncio
 import time
+from typing import Optional
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
 from ..core import browser_service
@@ -139,8 +140,13 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
 
                 if not notification_sent:
                     # Clean up approval request if notification failed
+                    logger.error(
+                        "Failed to send approval notification - aborting checkout to prevent accidental purchase",
+                        run_id=run_id,
+                        order_summary=order_summary
+                    )
                     delete_approval_request(run_id)
-                    raise Exception("Failed to send approval notification")
+                    raise Exception("Failed to send approval notification via Pushover. Checkout aborted to prevent accidental purchase.")
 
                 # Poll for approval
                 logger.info("Polling for approval decision",
@@ -223,8 +229,13 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
 
                 if not notification_sent:
                     # Clean up approval request if notification failed
+                    logger.error(
+                        "Failed to send approval notification - aborting checkout to prevent accidental purchase",
+                        run_id=run_id,
+                        order_summary=order_summary
+                    )
                     delete_approval_request(run_id)
-                    raise Exception("Failed to send approval notification")
+                    raise Exception("Failed to send approval notification via Pushover. Checkout aborted to prevent accidental purchase.")
 
                 # Poll for approval
                 logger.info("Polling for approval decision",
@@ -269,9 +280,10 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
     except ThreeDSecureRequired as e:
         # Send emergency notification immediately
         logger.error("3D Secure required - sending emergency notification")
-        send_notification(
-            "🚨 3D Secure Required",
-            "3D Secure authentication is required for payment. Please complete manually.",
+        pushover_client = get_pushover_client()
+        pushover_client.send_notification(
+            title="🚨 3D Secure Required",
+            message="3D Secure authentication is required for payment. Please complete manually.",
             priority=2  # Emergency - requires acknowledgment
         )
         raise
@@ -372,9 +384,107 @@ async def _verify_pickup_selected(page: Page) -> None:
         logger.warning("Could not verify pick-up is selected")
 
 
-async def _select_pickup_location(page: Page) -> str | None:
+async def _extract_order_quantity(page: Page) -> int | str:
+    """
+    Extract order quantity from checkout page using multiple strategies.
+
+    Strategy 1: Shopify checkout line_items API (window.Shopify.checkout.line_items)
+    Strategy 2: "Quantity" label with aria-hidden sibling (common Shopify pattern)
+    Strategy 3: DOM element selectors (quantity fields, spans, etc.)
+
+    Args:
+        page: Playwright page object
+
+    Returns:
+        Quantity as integer, or 'unknown' if not found
+    """
+    try:
+        # Strategy 1: Prefer Shopify checkout line_items if available
+        # Note: This doesn't work on bittersandbottles.com but kept as an opportunistic
+        # first check - it's fast and might work on other Shopify stores
+        qty_from_shopify = await page.evaluate(
+            """() => {
+                try {
+                    const li = window.Shopify?.checkout?.line_items || [];
+                    return li.reduce((sum, item) => sum + (item.quantity || 0), 0);
+                } catch (e) {
+                    return null;
+                }
+            }"""
+        )
+        if qty_from_shopify and qty_from_shopify > 0:
+            return qty_from_shopify
+
+        # Strategy 2: Try to find quantity by looking for "Quantity" label followed by aria-hidden span
+        # This is the pattern used in Shopify checkout pages
+        qty_from_label = await page.evaluate(
+            """() => {
+                try {
+                    // Find all spans that contain "Quantity" text
+                    const allSpans = Array.from(document.querySelectorAll('span'));
+                    const qtyLabel = allSpans.find(span => span.textContent.trim().toLowerCase() === 'quantity');
+
+                    if (qtyLabel) {
+                        // Look for next sibling with aria-hidden="true"
+                        let nextSibling = qtyLabel.nextElementSibling;
+                        if (nextSibling && nextSibling.tagName === 'SPAN' && nextSibling.getAttribute('aria-hidden') === 'true') {
+                            const qtyText = nextSibling.textContent.trim();
+                            const match = qtyText.match(/\\d+/);
+                            return match ? parseInt(match[0], 10) : null;
+                        }
+                    }
+                    return null;
+                } catch (e) {
+                    return null;
+                }
+            }"""
+        )
+
+        if qty_from_label and qty_from_label > 0:
+            return qty_from_label
+
+        # Strategy 3: Fall back to DOM element selectors
+        qty_total = 0
+        qty_nodes = await page.query_selector_all(
+            ".product__quantity, .order-summary__quantity, [data-checkout-line-item] .quantity, "
+            ".product-table__quantity, select[data-cartitem-quantity], [data-quantity], [data-cart-item-quantity], "
+            "select[aria-label='Quantity'], select[id^='quantity'], select[name*='quantity'], "
+            ".product-thumbnail__quantity, span.product-thumbnail__quantity, span[class*='thumbnail__quantity'], "
+            "span[data-order-summary-section='line-item-quantity']"
+        )
+        for node in qty_nodes:
+            # For select elements, use value attribute; otherwise parse inner text
+            tag = (await node.evaluate("el => el.tagName")).lower()
+            if tag == "select":
+                value = await node.get_attribute("value")
+                if value and value.isdigit():
+                    qty_total += int(value)
+                else:
+                    # try selected option text
+                    option = await node.query_selector("option:checked")
+                    if option:
+                        opt_text = (await option.inner_text() or "").strip()
+                        digits = "".join(ch for ch in opt_text if ch.isdigit())
+                        if digits:
+                            qty_total += int(digits)
+            else:
+                text = (await node.inner_text() or "").strip()
+                digits = "".join(ch for ch in text if ch.isdigit())
+                if digits:
+                    qty_total += int(digits)
+
+        if qty_total > 0:
+            return qty_total
+
+    except Exception as e:
+        logger.debug("Could not extract quantity", error=str(e))
+
+    return "unknown"
+
+
+async def _select_pickup_location(page: Page) -> Optional[str]:
     """Verify and return the selected pickup location.
-    
+
     Returns:
         The pickup location string, or None if not detected
     """
@@ -549,83 +659,8 @@ async def _get_order_summary(page: Page, pickup_location: str | None = None) -> 
 
     # Note: pickup_location is passed in as a parameter (already detected earlier)
 
-    # Try to get quantity - sum visible item quantities in the order summary
-    try:
-        # Shopify checkout exposes line_items with quantity; prefer this if available
-        qty_from_shopify = await page.evaluate(
-            """() => {
-                try {
-                    const li = window.Shopify?.checkout?.line_items || [];
-                    return li.reduce((sum, item) => sum + (item.quantity || 0), 0);
-                } catch (e) {
-                    return null;
-                }
-            }"""
-        )
-        if qty_from_shopify and qty_from_shopify > 0:
-            summary["quantity"] = qty_from_shopify
-
-        # Try to find quantity by looking for "Quantity" label followed by aria-hidden span
-        # This is the pattern used in Shopify checkout pages
-        if summary["quantity"] == "unknown":
-            qty_from_label = await page.evaluate(
-                """() => {
-                    try {
-                        // Find all spans that contain "Quantity" text
-                        const allSpans = Array.from(document.querySelectorAll('span'));
-                        const qtyLabel = allSpans.find(span => span.textContent.trim().toLowerCase() === 'quantity');
-
-                        if (qtyLabel) {
-                            // Look for next sibling with aria-hidden="true"
-                            let nextSibling = qtyLabel.nextElementSibling;
-                            if (nextSibling && nextSibling.tagName === 'SPAN' && nextSibling.getAttribute('aria-hidden') === 'true') {
-                                const qtyText = nextSibling.textContent.trim();
-                                const match = qtyText.match(/\\d+/);
-                                return match ? parseInt(match[0], 10) : null;
-                            }
-                        }
-                        return null;
-                    } catch (e) {
-                        return null;
-                    }
-                }"""
-            )
-
-            if qty_from_label and qty_from_label > 0:
-                summary["quantity"] = qty_from_label
-
-        qty_total = 0
-        qty_nodes = await page.query_selector_all(
-            ".product__quantity, .order-summary__quantity, [data-checkout-line-item] .quantity, "
-            ".product-table__quantity, select[data-cartitem-quantity], [data-quantity], [data-cart-item-quantity], "
-            "select[aria-label='Quantity'], select[id^='quantity'], select[name*='quantity'], "
-            ".product-thumbnail__quantity, span.product-thumbnail__quantity, span[class*='thumbnail__quantity'], "
-            "span[data-order-summary-section='line-item-quantity']"
-        )
-        for node in qty_nodes:
-            # For select elements, use value attribute; otherwise parse inner text
-            tag = (await node.evaluate("el => el.tagName")).lower()
-            if tag == "select":
-                value = await node.get_attribute("value")
-                if value and value.isdigit():
-                    qty_total += int(value)
-                else:
-                    # try selected option text
-                    option = await node.query_selector("option:checked")
-                    if option:
-                        opt_text = (await option.inner_text() or "").strip()
-                        digits = "".join(ch for ch in opt_text if ch.isdigit())
-                        if digits:
-                            qty_total += int(digits)
-            else:
-                text = (await node.inner_text() or "").strip()
-                digits = "".join(ch for ch in text if ch.isdigit())
-                if digits:
-                    qty_total += int(digits)
-        if qty_total > 0:
-            summary["quantity"] = qty_total
-    except Exception as e:
-        logger.debug("Could not get quantity", error=str(e))
+    # Extract quantity using dedicated function with multiple strategies
+    summary["quantity"] = await _extract_order_quantity(page)
 
     # Log warnings for any fields that could not be extracted
     if summary["subtotal"] == "unknown":

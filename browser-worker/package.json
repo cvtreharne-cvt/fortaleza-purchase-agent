@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "express": "^4.19.2",
+    "express-rate-limit": "^7.1.5",
     "playwright": "^1.57.0"
   },
   "devDependencies": {
