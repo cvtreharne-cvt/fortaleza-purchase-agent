@@ -5,17 +5,37 @@ from urllib.parse import urljoin
 
 import httpx
 
-from .config import get_settings
+from .config import get_settings, Mode
 from .errors import (
     NavigationError,
     TwoFactorRequired,
     CaptchaRequired,
     ProductSoldOutError,
     ThreeDSecureRequired,
+    ConfigurationError,
 )
 from .logging import get_logger
 
 logger = get_logger(__name__)
+
+
+def _redact_sensitive(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Redact sensitive fields from payload for logging."""
+    if not isinstance(data, dict):
+        return data
+
+    redacted = {}
+    for key, value in data.items():
+        if key == "payment" and isinstance(value, dict):
+            # Redact all payment fields
+            redacted[key] = {k: "***REDACTED***" for k in value.keys()}
+        elif any(s in key.lower() for s in ["password", "cc_", "cvv", "secret", "token", "key"]):
+            redacted[key] = "***REDACTED***"
+        elif isinstance(value, dict):
+            redacted[key] = _redact_sensitive(value)
+        else:
+            redacted[key] = value
+    return redacted
 
 
 def is_enabled() -> bool:
@@ -26,13 +46,28 @@ def is_enabled() -> bool:
 
 def _base_url() -> str:
     settings = get_settings()
-    return settings.browser_worker_url.rstrip("/")  # type: ignore[union-attr]
+    url = settings.browser_worker_url.rstrip("/")  # type: ignore[union-attr]
+
+    # Enforce HTTPS in production mode to protect sensitive data in transit
+    # Local development (dryrun/test) can use http://localhost
+    if settings.mode == Mode.PROD and not url.startswith("https://"):
+        raise ConfigurationError(
+            "BROWSER_WORKER_URL must use HTTPS in production mode. "
+            f"Got: {url}. Use https://your-worker-url for production."
+        )
+
+    return url
 
 
 async def _post_json(endpoint: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Send POST to browser worker and return JSON."""
     settings = get_settings()
     url = urljoin(_base_url() + "/", endpoint.lstrip("/"))
+
+    # Log request with sensitive data redacted
+    safe_payload = _redact_sensitive(payload)
+    logger.debug(f"Browser worker request: {endpoint}", payload=safe_payload)
+
     async with httpx.AsyncClient(timeout=settings.browser_worker_timeout) as client:
         resp = await client.post(url, json=payload)
         data = resp.json()
