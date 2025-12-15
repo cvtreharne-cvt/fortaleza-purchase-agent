@@ -17,11 +17,13 @@ An AI agent that automatically purchases products from Bitters & Bottles Spirit 
    - Orchestrates entire purchase workflow
    - Single agent with specialized tools
    - Deployed on GCP Cloud Run
+   - Calls remote browser worker for automation
 
-3. **Browser Automation (Playwright)**
-   - Native Python Playwright library
-   - Runs in same process as agent
-   - Headless Chromium for production
+3. **Browser Worker (Node.js Playwright)**
+   - Separate Node.js server running Playwright
+   - Hosted at bnb-worker.treharne.com
+   - Accessed via Cloudflare reverse tunnel
+   - Isolated from Cloud Run to avoid bot detection
 
 4. **Secret Storage (GCP Secret Manager)**
    - Secure credential storage
@@ -31,7 +33,7 @@ An AI agent that automatically purchases products from Bitters & Bottles Spirit 
 5. **Notifications (Pushover)**
    - Real-time status updates
    - Success/failure alerts
-   - Human assistance requests
+   - Human approval requests (interactive)
 
 ### Agent Tools
 
@@ -45,27 +47,29 @@ An AI agent that automatically purchases products from Bitters & Bottles Spirit 
 
 **Primary Flow (Happy Path):**
 ```
-Gmail Alert → Pi Webhook (with direct_link) → Cloud Run Agent →
-  Navigate to direct_link → Verify Age (if modal) → 
-    Login (if needed) → Navigate back to product → 
-      Add to Cart → Checkout → Submit Order → 
-        Pushover Notification
+Gmail Alert → Pi Webhook (direct_link) → Cloud Run Agent →
+  [Agent calls Browser Worker at bnb-worker.treharne.com for all browser operations:]
+    Login → Navigate to direct_link → Verify Age (if modal) →
+      Add to Cart → Checkout → Human Approval (Pushover) →
+        Submit Order → Success Notification
 ```
 
 **Error Fallback Flow:**
 ```
 If direct_link fails (protocol error, 404, wrong page):
-  → Navigate to homepage → Login → 
-    Search for "Fortaleza" → Select product →
-      Add to Cart → Checkout → Submit Order →
-        Pushover Notification
+  Login → Navigate to homepage → Search for "Fortaleza" →
+    Select product → Add to Cart → Checkout →
+      Human Approval → Submit Order → Success Notification
 ```
 
 **Key Flow Details:**
+- Cloud Run agent receives webhook and orchestrates the workflow
+- All browser automation executed remotely on bnb-worker.treharne.com via Cloudflare tunnel
+- Login happens first to establish session
 - Direct link from email is tried first (faster, more reliable)
 - Age verification handled opportunistically (may appear at any navigation)
-- Login check before attempting login (may already be logged in via cookies)
-- After login, navigate back to product page (login redirects to My Account)
+- If direct link fails, fallback to homepage → search → product selection
+- Human approval required before purchase submission (interactive Pushover notification)
 - Search is fallback only for link errors
 
 ## Why Native Playwright (Not MCP)?
@@ -85,6 +89,33 @@ If direct_link fails (protocol error, 404, wrong page):
 - ❌ More failure points
 
 For this focused use case, native Playwright provides the best balance of simplicity and capability.
+
+## Why Separate Browser Worker?
+
+**Bot Detection Problem:**
+- Bitters & Bottles website has bot detection measures
+- Cloud Run IPs frequently flagged as suspicious
+- Resulted in timeouts and failed purchases
+
+**Solution: Isolated Browser Worker**
+- Dedicated Node.js server running Playwright
+- Hosted at bnb-worker.treharne.com
+- Accessed via Cloudflare reverse tunnel
+- Residential/stable IP avoids Cloud Run IP reputation issues
+- Consistent browser fingerprint and session state
+
+**Architecture:**
+- Cloud Run agent orchestrates workflow and makes decisions
+- Browser worker executes browser automation tools remotely
+- Agent calls worker APIs for each tool (login, navigate, add to cart, checkout)
+- Worker maintains browser session and cookies between calls
+
+**Trade-offs:**
+- ➕ Avoids bot detection (critical for success)
+- ➕ Stable browser environment with persistent cookies
+- ➕ Can run headed browser for debugging if needed
+- ➖ Additional infrastructure (separate worker server)
+- ➖ Network latency between agent and browser (acceptable for this use case)
 
 ## Security Architecture
 
@@ -282,6 +313,8 @@ HEADLESS=false python scripts/debug_order_summary.py
 ```
 
 ## GCP Deployment
+
+**Note:** This deployment guide covers the Cloud Run agent only. The browser worker (bnb-worker.treharne.com) is deployed separately as a Node.js service and accessed via Cloudflare tunnel.
 
 ### 1. Create GCP Project
 

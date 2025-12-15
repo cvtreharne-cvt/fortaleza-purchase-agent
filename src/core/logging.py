@@ -42,7 +42,12 @@ def setup_logging() -> None:
         root_logger.handlers = []
         root_logger.addHandler(console_handler)
         root_logger.addHandler(file_handler)
-        
+
+        # Suppress httpx request/response logging to prevent sensitive data exposure
+        # httpx logs HTTP requests at INFO level, which could include request bodies
+        # containing payment data. We suppress it to WARNING level.
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+
         # Configure structlog for JSON
         structlog.configure(
             processors=[
@@ -83,7 +88,10 @@ def setup_logging() -> None:
         root_logger.handlers = []
         root_logger.addHandler(console_handler)
         root_logger.addHandler(file_handler)
-        
+
+        # Suppress httpx request/response logging to prevent sensitive data exposure
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+
         structlog.configure(
             processors=[
                 structlog.stdlib.filter_by_level,

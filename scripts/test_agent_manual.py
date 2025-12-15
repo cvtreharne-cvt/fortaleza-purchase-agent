@@ -33,7 +33,7 @@ async def main():
     print(f"  Mode: {settings.mode.value}")
     print(f"  Headless: {settings.headless}")
     print(f"  Product: {settings.product_name}")
-    print(f"  Agent Model: {settings.agent_model}")
+    print(f"  Browser Worker: {settings.browser_worker_url or 'Local Playwright'}")
 
     # Check required config
     if not settings.google_api_key:
@@ -41,6 +41,11 @@ async def main():
         print("Please add your Google API key to .env.local:")
         print("  GOOGLE_API_KEY=your-api-key-here")
         return
+
+    # Set GOOGLE_API_KEY environment variable (needed by Google ADK)
+    # This mimics what FastAPI lifespan does in main.py
+    import os
+    os.environ['GOOGLE_API_KEY'] = settings.google_api_key
 
     if not settings.bnb_email or not settings.bnb_password:
         print("\n❌ ERROR: B&B credentials not set in .env.local")
