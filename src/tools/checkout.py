@@ -47,6 +47,82 @@ APPROVAL_TIMEOUT_MINUTES = 10  # Total time to wait for human approval
 APPROVAL_POLL_INTERVAL_SECONDS = 2  # How often to check approval status
 
 
+async def _request_human_approval(run_id: Optional[str], order_summary: dict) -> None:
+    """
+    Request human approval for purchase via Pushover notification.
+
+    Polls for approval decision and raises appropriate exceptions if rejected or timeout.
+
+    Args:
+        run_id: Unique identifier for this purchase run
+        order_summary: Order details to display in approval request
+
+    Raises:
+        ApprovalRejectedError: If human rejects the purchase
+        ApprovalTimeoutError: If approval times out
+        Exception: If notification fails or unexpected status
+    """
+    if not run_id:
+        logger.warning("No run_id provided - skipping approval (not recommended for production)")
+        return
+
+    logger.info("Requesting human approval for purchase", run_id=run_id)
+
+    # Create approval request
+    create_approval_request(
+        run_id=run_id,
+        order_summary=order_summary,
+        timeout_minutes=APPROVAL_TIMEOUT_MINUTES
+    )
+
+    # Send Pushover notification with approval request
+    pushover_client = get_pushover_client()
+    settings = get_settings()
+
+    # Validate webhook configuration before proceeding
+    settings.validate_webhook_config()
+
+    # Construct approval callback URLs using configured base URL
+    approve_url = f"{settings.webhook_base_url}/approval/{run_id}/approve"
+    reject_url = f"{settings.webhook_base_url}/approval/{run_id}/reject"
+
+    notification_sent = pushover_client.send_approval_request(
+        run_id=run_id,
+        order_summary=order_summary,
+        approve_url=approve_url,
+        reject_url=reject_url
+    )
+
+    if not notification_sent:
+        # Clean up approval request if notification failed
+        logger.error(
+            "Failed to send approval notification - aborting checkout to prevent accidental purchase",
+            run_id=run_id,
+            order_summary=order_summary
+        )
+        delete_approval_request(run_id)
+        raise Exception("Failed to send approval notification via Pushover. Checkout aborted to prevent accidental purchase.")
+
+    # Poll for approval
+    logger.info("Polling for approval decision",
+               timeout_minutes=APPROVAL_TIMEOUT_MINUTES,
+               poll_interval_seconds=APPROVAL_POLL_INTERVAL_SECONDS)
+
+    approval_status = await _poll_for_approval(run_id)
+
+    if approval_status["decision"] == "approved":
+        logger.info("Purchase approved by human", run_id=run_id)
+    elif approval_status["decision"] == "rejected":
+        logger.warning("Purchase rejected by human", run_id=run_id)
+        raise ApprovalRejectedError("Purchase rejected by human approval")
+    elif approval_status["decision"] == "timeout":
+        logger.warning("Approval request timed out", run_id=run_id)
+        raise ApprovalTimeoutError(f"Approval request timed out after {APPROVAL_TIMEOUT_MINUTES} minutes")
+    else:
+        logger.error("Unexpected approval status", status=approval_status)
+        raise Exception(f"Unexpected approval status: {approval_status['decision']}")
+
+
 async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = None) -> dict:
     """
     Complete checkout process with payment information.
@@ -111,63 +187,7 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
 
         # Request human approval if submitting order
         if submit_order:
-            if run_id:
-                logger.info("Requesting human approval for purchase", run_id=run_id)
-
-                # Create approval request
-                create_approval_request(
-                    run_id=run_id,
-                    order_summary=order_summary,
-                    timeout_minutes=APPROVAL_TIMEOUT_MINUTES
-                )
-
-                # Send Pushover notification with approval request
-                pushover_client = get_pushover_client()
-
-                # Validate webhook configuration before proceeding
-                settings.validate_webhook_config()
-
-                # Construct approval callback URLs using configured base URL
-                approve_url = f"{settings.webhook_base_url}/approval/{run_id}/approve"
-                reject_url = f"{settings.webhook_base_url}/approval/{run_id}/reject"
-
-                notification_sent = pushover_client.send_approval_request(
-                    run_id=run_id,
-                    order_summary=order_summary,
-                    approve_url=approve_url,
-                    reject_url=reject_url
-                )
-
-                if not notification_sent:
-                    # Clean up approval request if notification failed
-                    logger.error(
-                        "Failed to send approval notification - aborting checkout to prevent accidental purchase",
-                        run_id=run_id,
-                        order_summary=order_summary
-                    )
-                    delete_approval_request(run_id)
-                    raise Exception("Failed to send approval notification via Pushover. Checkout aborted to prevent accidental purchase.")
-
-                # Poll for approval
-                logger.info("Polling for approval decision",
-                           timeout_minutes=APPROVAL_TIMEOUT_MINUTES,
-                           poll_interval_seconds=APPROVAL_POLL_INTERVAL_SECONDS)
-
-                approval_status = await _poll_for_approval(run_id)
-
-                if approval_status["decision"] == "approved":
-                    logger.info("Purchase approved by human", run_id=run_id)
-                elif approval_status["decision"] == "rejected":
-                    logger.warning("Purchase rejected by human", run_id=run_id)
-                    raise ApprovalRejectedError("Purchase rejected by human approval")
-                elif approval_status["decision"] == "timeout":
-                    logger.warning("Approval request timed out", run_id=run_id)
-                    raise ApprovalTimeoutError(f"Approval request timed out after {APPROVAL_TIMEOUT_MINUTES} minutes")
-                else:
-                    logger.error("Unexpected approval status", status=approval_status)
-                    raise Exception(f"Unexpected approval status: {approval_status['decision']}")
-            else:
-                logger.warning("No run_id provided - skipping approval (not recommended for production)")
+            await _request_human_approval(run_id, order_summary)
 
             # Now submit the order for real
             logger.info("Submitting order via browser worker")
@@ -200,63 +220,7 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
         
         if submit_order:
             # Request human approval before submitting
-            if run_id:
-                logger.info("Requesting human approval for purchase", run_id=run_id)
-
-                # Create approval request
-                create_approval_request(
-                    run_id=run_id,
-                    order_summary=order_summary,
-                    timeout_minutes=APPROVAL_TIMEOUT_MINUTES
-                )
-
-                # Send Pushover notification with approval request
-                pushover_client = get_pushover_client()
-
-                # Validate webhook configuration before proceeding
-                settings.validate_webhook_config()
-
-                # Construct approval callback URLs using configured base URL
-                approve_url = f"{settings.webhook_base_url}/approval/{run_id}/approve"
-                reject_url = f"{settings.webhook_base_url}/approval/{run_id}/reject"
-
-                notification_sent = pushover_client.send_approval_request(
-                    run_id=run_id,
-                    order_summary=order_summary,
-                    approve_url=approve_url,
-                    reject_url=reject_url
-                )
-
-                if not notification_sent:
-                    # Clean up approval request if notification failed
-                    logger.error(
-                        "Failed to send approval notification - aborting checkout to prevent accidental purchase",
-                        run_id=run_id,
-                        order_summary=order_summary
-                    )
-                    delete_approval_request(run_id)
-                    raise Exception("Failed to send approval notification via Pushover. Checkout aborted to prevent accidental purchase.")
-
-                # Poll for approval
-                logger.info("Polling for approval decision",
-                           timeout_minutes=APPROVAL_TIMEOUT_MINUTES,
-                           poll_interval_seconds=APPROVAL_POLL_INTERVAL_SECONDS)
-
-                approval_status = await _poll_for_approval(run_id)
-
-                if approval_status["decision"] == "approved":
-                    logger.info("Purchase approved by human", run_id=run_id)
-                elif approval_status["decision"] == "rejected":
-                    logger.warning("Purchase rejected by human", run_id=run_id)
-                    raise ApprovalRejectedError("Purchase rejected by human approval")
-                elif approval_status["decision"] == "timeout":
-                    logger.warning("Approval request timed out", run_id=run_id)
-                    raise ApprovalTimeoutError(f"Approval request timed out after {APPROVAL_TIMEOUT_MINUTES} minutes")
-                else:
-                    logger.error("Unexpected approval status", status=approval_status)
-                    raise Exception(f"Unexpected approval status: {approval_status['decision']}")
-            else:
-                logger.warning("No run_id provided - skipping approval (not recommended for production)")
+            await _request_human_approval(run_id, order_summary)
 
             # Submit the order
             logger.info("Submitting order for real")
