@@ -86,6 +86,7 @@ let context;
 let page;
 
 const app = express();
+app.set('trust proxy', true);  // Trust X-Forwarded-For from Cloudflare tunnel
 
 // Rate limiting: 100 requests per 15 minutes per IP
 const limiter = rateLimit({
