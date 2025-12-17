@@ -86,12 +86,12 @@ let context;
 let page;
 
 const app = express();
-app.set('trust proxy', true);  // Trust X-Forwarded-For from Cloudflare tunnel
+app.set('trust proxy', 1);  // Trust only the first proxy (Cloudflare tunnel)
 
-// Rate limiting: 100 requests per 15 minutes per IP
+// Rate limiting: 5 requests per 15 minutes per IP
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // Limit each IP to 100 requests per windowMs
+  max: 5, // Limit each IP to 5 requests per windowMs
   message: { status: 'error', message: 'Too many requests, please try again later.', error_type: 'RateLimitExceeded' },
   standardHeaders: true,
   legacyHeaders: false,
