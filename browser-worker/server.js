@@ -383,7 +383,21 @@ async function searchForProduct(currentPage, productName, dob) {
     }
   }
 
-  if (!productLink) return { status: 'error', message: `Product '${productName}' not found` };
+  if (!productLink) {
+    // Debug: Log what product links are actually on the page
+    try {
+      const availableLinks = await currentPage.$$eval('a[href*="products"]', links =>
+        links.slice(0, 10).map(l => ({ href: l.href, text: l.textContent.trim().substring(0, 50) }))
+      );
+      console.log('DEBUG: Product search failed. Available product links on page:', JSON.stringify(availableLinks, null, 2));
+      console.log('DEBUG: Search term:', productName);
+      console.log('DEBUG: Generated slug:', slug);
+      console.log('DEBUG: Current URL:', currentPage.url());
+    } catch (e) {
+      console.log('DEBUG: Failed to get available links:', e.message);
+    }
+    return { status: 'error', message: `Product '${productName}' not found` };
+  }
 
   await productLink.click();
   await currentPage.waitForLoadState('domcontentloaded');
