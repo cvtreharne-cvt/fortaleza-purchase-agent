@@ -1,5 +1,6 @@
 """Navigate to product page tool with fallback to search."""
 
+import re
 from typing import Optional
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeout
 
@@ -268,7 +269,7 @@ async def _search_for_product(page: Page, product_name: str) -> dict:
         # Look for product in the suggestions dropdown (under "Products" section)
         # Note: Suggestions contain both search queries (/search?q=) and products (/products/)
         # We want the product link, not the search query link
-        product_name_lower = product_name.lower().replace(' ', '-')
+        product_name_lower = re.sub(r'\s+', '-', product_name.lower())
         suggestion_selectors = [
             f"a[href^='/products/'][href*='{product_name_lower}']",  # Product link (not search)
             f".predictive-search a[href^='/products/'][href*='{product_name_lower}']",
