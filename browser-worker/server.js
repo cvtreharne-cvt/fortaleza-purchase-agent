@@ -347,7 +347,7 @@ async function searchForProduct(currentPage, productName, dob) {
   await searchInput.fill(productName);
   await currentPage.waitForTimeout(1000);
 
-  const slug = productName.toLowerCase().replace(/\\s+/g, '-');
+  const slug = productName.toLowerCase().replace(/\s+/g, '-');
   const suggestionSelectors = [
     `a[href^='/products/'][href*='${slug}']`,
     `.predictive-search a[href^='/products/'][href*='${slug}']`,
