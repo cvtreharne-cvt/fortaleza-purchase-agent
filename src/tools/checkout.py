@@ -572,12 +572,32 @@ async def _get_order_summary(page: Page, pickup_location: str | None = None) -> 
         pickup_location: The pickup location string (if already detected), or None
     """
     summary = {
+        "product": "unknown",
         "subtotal": "unknown",
         "tax": "unknown",
         "total": "unknown",
         "pickup_location": pickup_location or "unknown",
         "quantity": "unknown",
     }
+
+    # Try to extract product name from checkout page
+    try:
+        # Strategy 1: Look for product name in Shopping cart section
+        product_elem = await page.query_selector("section[aria-label='Shopping cart'] [role='cell'] p")
+        if product_elem:
+            text = await product_elem.inner_text()
+            if text and text.strip() and not text.strip().lower() in ['quantity', 'price']:
+                summary["product"] = text.strip()[:100]
+
+        # Strategy 2: Fallback to image alt text if not found
+        if summary["product"] == "unknown":
+            img_elem = await page.query_selector("section[aria-label='Shopping cart'] img[alt]")
+            if img_elem:
+                alt_text = await img_elem.get_attribute("alt")
+                if alt_text and alt_text.strip():
+                    summary["product"] = alt_text.strip()[:100]
+    except Exception as e:
+        logger.debug("Could not extract product name", error=str(e))
 
     # Try to get subtotal - grandparent contains "Subtotal\n$36.50"
     try:

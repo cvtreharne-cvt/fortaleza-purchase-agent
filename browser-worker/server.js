@@ -365,20 +365,66 @@ async function searchForProduct(currentPage, productName, dob) {
     await currentPage.waitForLoadState('domcontentloaded');
     await currentPage.waitForTimeout(MEDIUM_TIMEOUT);
 
-    const parts = slug.split('-');
-    const resultSelectors = [
+    // Split product name into parts for scoring
+    const nameParts = slug.split('-');
+    const MIN_WORD_MATCH_THRESHOLD = 2;
+
+    // First try exact match
+    const exactSelectors = [
       `a[href*='${slug}'][href*='products']`,
       `.productitem a[href*='${slug}']`,
-      `a[href*='products'][href*='${parts[0]}']`,
-      ".product-item a[href*='products']",
-      "a.product-link[href*='products']",
     ];
-    for (const selector of resultSelectors) {
+    for (const selector of exactSelectors) {
       try {
         productLink = await currentPage.$(selector);
-        if (productLink) break;
+        if (productLink) {
+          const href = await productLink.getAttribute('href');
+          console.log(`DEBUG: Found exact product match: ${href}`);
+          break;
+        }
       } catch (_) {
         // continue
+      }
+    }
+
+    // If no exact match, score all product links to find best match
+    if (!productLink) {
+      console.log(`DEBUG: No exact match found, scoring all product links. Name parts: ${nameParts.join(', ')}`);
+      try {
+        const allProductLinks = await currentPage.$$("a[href*='products']");
+        let bestLink = null;
+        let bestScore = 0;
+
+        for (const link of allProductLinks) {
+          const href = await link.getAttribute('href');
+          if (!href || href.includes('/search') || href.includes('/collections')) {
+            continue;
+          }
+
+          // Score based on how many words from product name appear in URL
+          const hrefLower = href.toLowerCase();
+          const score = nameParts.reduce((count, part) => count + (hrefLower.includes(part) ? 1 : 0), 0);
+
+          console.log(`DEBUG: Scoring product link: ${href} - score: ${score}/${nameParts.length}`);
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestLink = link;
+          }
+        }
+
+        // Adjust threshold dynamically for single-word products
+        const minThreshold = Math.min(MIN_WORD_MATCH_THRESHOLD, nameParts.length);
+
+        if (bestLink && bestScore >= minThreshold) {
+          productLink = bestLink;
+          const href = await productLink.getAttribute('href');
+          console.log(`DEBUG: Found best matching product: ${href} (score: ${bestScore}/${nameParts.length}, threshold: ${minThreshold})`);
+        } else {
+          console.log(`DEBUG: No good product match found (best score: ${bestScore}, threshold: ${minThreshold})`);
+        }
+      } catch (e) {
+        console.log(`DEBUG: Error scoring product links: ${e.message}`);
       }
     }
   }
@@ -963,12 +1009,38 @@ async function extractOrderQuantity(currentPage) {
 
 async function getOrderSummary(currentPage, pickupLocation) {
   const summary = {
+    product: 'unknown',
     subtotal: 'unknown',
     tax: 'unknown',
     total: 'unknown',
     pickup_location: pickupLocation || 'unknown',
     quantity: 'unknown',
   };
+
+  // Try to extract product name from checkout page
+  try {
+    // Strategy 1: Look for product name in Shopping cart section
+    const productElem = await currentPage.$("section[aria-label='Shopping cart'] [role='cell'] p");
+    if (productElem) {
+      const text = await productElem.innerText();
+      if (text && text.trim() && !['quantity', 'price'].includes(text.trim().toLowerCase())) {
+        summary.product = text.trim().slice(0, 100);
+      }
+    }
+
+    // Strategy 2: Fallback to image alt text if not found
+    if (summary.product === 'unknown') {
+      const imgElem = await currentPage.$("section[aria-label='Shopping cart'] img[alt]");
+      if (imgElem) {
+        const altText = await imgElem.getAttribute('alt');
+        if (altText && altText.trim()) {
+          summary.product = altText.trim().slice(0, 100);
+        }
+      }
+    }
+  } catch (err) {
+    logger.debug('Could not extract product name', { error: err.message });
+  }
 
   try {
     const subtotalElem = await currentPage.$('text=/^Subtotal$/i');
