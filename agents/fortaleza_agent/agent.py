@@ -303,11 +303,11 @@ def create_adk_tools(product_name: str = ""):
         """Complete checkout with payment. In dryrun mode, does NOT submit. In prod mode, submits real order."""
         try:
             if use_worker:
-                result = await checkout_and_pay(None, submit_order=None)  # type: ignore[arg-type]
+                result = await checkout_and_pay(None, submit_order=None, run_id=event_id)  # type: ignore[arg-type]
             else:
                 browser = await ensure_browser_started()
                 page = browser.page
-                result = await checkout_and_pay(page, submit_order=None)
+                result = await checkout_and_pay(page, submit_order=None, run_id=event_id)
             return result
         except ThreeDSecureRequired as e:
             logger.error("Checkout failed (3DS required)", error=str(e), error_type=type(e).__name__)
