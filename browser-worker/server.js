@@ -819,7 +819,7 @@ async function detectPickupLocation(currentPage) {
       const el = await currentPage.waitForSelector(selector, { timeout: MEDIUM_TIMEOUT });
       if (el) {
         const text = await el.innerText();
-        return text.split('\\n')[0].trim().slice(0, 50);
+        return text.split('\n')[0].trim().slice(0, 50);
       }
     } catch (_) {}
   }
@@ -975,7 +975,7 @@ async function getOrderSummary(currentPage, pickupLocation) {
     if (subtotalElem) {
       const grandparent = await subtotalElem.evaluateHandle((el) => el.parentElement.parentElement);
       const text = await grandparent.innerText();
-      if (text.includes('$')) summary.subtotal = `$${text.split('$')[1].trim().split(/\\s+/)[0]}`;
+      if (text.includes('$')) summary.subtotal = `$${text.split('$')[1].trim().split(/\s+/)[0]}`;
     }
   } catch (_) {}
 
@@ -986,7 +986,7 @@ async function getOrderSummary(currentPage, pickupLocation) {
         (el) => el.parentElement?.parentElement?.parentElement?.parentElement,
       );
       const text = await parent4.innerText();
-      if (text.includes('$')) summary.tax = `$${text.split('$')[1].trim().split(/\\s+/)[0]}`;
+      if (text.includes('$')) summary.tax = `$${text.split('$')[1].trim().split(/\s+/)[0]}`;
     }
   } catch (_) {}
 
@@ -995,7 +995,7 @@ async function getOrderSummary(currentPage, pickupLocation) {
     if (totalElem) {
       const grandparent = await totalElem.evaluateHandle((el) => el.parentElement.parentElement);
       const text = await grandparent.innerText();
-      if (text.includes('$')) summary.total = `$${text.split('$')[1].trim().split(/\\s+/)[0]}`;
+      if (text.includes('$')) summary.total = `$${text.split('$')[1].trim().split(/\s+/)[0]}`;
     }
   } catch (_) {}
 
