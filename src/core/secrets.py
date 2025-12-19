@@ -80,6 +80,7 @@ class SecretManager:
             "cc_exp_month": self.get_secret("cc_exp_month"),
             "cc_exp_year": self.get_secret("cc_exp_year"),
             "cc_cvv": self.get_secret("cc_cvv"),
+            "cc_name": self.get_secret("cc_name"),
             "billing_name": self.get_secret("billing_name"),
             "billing_address1": self.get_secret("billing_address1"),
             "billing_address2": self.get_secret("billing_address2") if self._secret_exists("billing_address2") else "",

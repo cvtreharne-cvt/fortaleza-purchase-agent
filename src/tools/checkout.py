@@ -170,7 +170,7 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
             "cc_exp_month": secret_manager.get_secret("cc_exp_month"),
             "cc_exp_year": secret_manager.get_secret("cc_exp_year"),
             "cc_cvv": secret_manager.get_secret("cc_cvv"),
-            "billing_name": secret_manager.get_secret("billing_name"),
+            "cc_name": secret_manager.get_secret("cc_name"),
         }
 
         # First, get order summary without submitting (submit_order=False temporarily)
@@ -500,7 +500,7 @@ async def _fill_payment_info(page: Page) -> None:
     cc_exp_month = secret_manager.get_secret("cc_exp_month")
     cc_exp_year = secret_manager.get_secret("cc_exp_year")
     cc_cvv = secret_manager.get_secret("cc_cvv")
-    billing_name = secret_manager.get_secret("billing_name")
+    billing_name = secret_manager.get_secret("cc_name")
     
     # Payment fields are in iframes (Shopify PCI-compliant checkout)
     # We need to find the iframes and fill them

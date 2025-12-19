@@ -832,7 +832,7 @@ async function fillPayment(currentPage, paymentInfo) {
     cc_exp_month: ccExpMonth,
     cc_exp_year: ccExpYear,
     cc_cvv: ccCvv,
-    billing_name: billingName,
+    cc_name: billingName,
   } = paymentInfo;
 
   const paymentSection = await currentPage.$('text=/Payment/i');
