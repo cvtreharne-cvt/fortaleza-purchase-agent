@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     cc_exp_month: Optional[str] = Field(default=None, description="CC expiry month (local dev only)")
     cc_exp_year: Optional[str] = Field(default=None, description="CC expiry year (local dev only)")
     cc_cvv: Optional[str] = Field(default=None, description="CC CVV (local dev only)")
+    cc_name: Optional[str] = Field(default=None, description="Cardholder name (local dev only)")
     billing_name: Optional[str] = Field(default=None, description="Billing name (local dev only)")
     billing_address1: Optional[str] = Field(default=None, description="Billing address 1 (local dev only)")
     billing_address2: Optional[str] = Field(default="", description="Billing address 2 (local dev only)")
