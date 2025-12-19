@@ -623,8 +623,15 @@ async def _get_order_summary(page: Page, pickup_location: str | None = None) -> 
             text = await parent4.inner_text()
             # Extract price from text like "Estimated taxes\n$3.61"
             if "$" in text:
-                price = text.split("$")[1].strip().split()[0]
-                summary["tax"] = f"${price}"
+                # Find the dollar amount that comes AFTER "Estimated taxes" text
+                parts = text.split("$")
+                for i, part in enumerate(parts):
+                    if "estimated tax" in part.lower():
+                        # The next part should contain the tax amount
+                        if i + 1 < len(parts):
+                            price = parts[i + 1].strip().split()[0]
+                            summary["tax"] = f"${price}"
+                            break
     except Exception as e:
         logger.debug("Could not get tax", error=str(e))
 

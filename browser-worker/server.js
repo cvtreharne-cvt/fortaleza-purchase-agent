@@ -1058,7 +1058,19 @@ async function getOrderSummary(currentPage, pickupLocation) {
         (el) => el.parentElement?.parentElement?.parentElement?.parentElement,
       );
       const text = await parent4.innerText();
-      if (text.includes('$')) summary.tax = `$${text.split('$')[1].trim().split(/\s+/)[0]}`;
+      if (text.includes('$')) {
+        // Find the dollar amount that comes AFTER "Estimated taxes" text
+        const parts = text.split('$');
+        for (let i = 0; i < parts.length; i++) {
+          if (parts[i].toLowerCase().includes('estimated tax')) {
+            // The next part should contain the tax amount
+            if (i + 1 < parts.length) {
+              summary.tax = `$${parts[i + 1].trim().split(/\s+/)[0]}`;
+              break;
+            }
+          }
+        }
+      }
     }
   } catch (_) {}
 
