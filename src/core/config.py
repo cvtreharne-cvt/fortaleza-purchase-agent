@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     browser_timeout: int = Field(default=60000, description="Browser timeout in milliseconds")
     navigation_timeout: int = Field(default=NAVIGATION_TIMEOUT_DEFAULT, description="Navigation timeout in milliseconds (30s default, set to 120000 for Cloud Run)")
     browser_worker_url: Optional[str] = Field(default=None, description="Browser worker base URL (enables Node Playwright worker)")
-    browser_worker_timeout: int = Field(default=60.0, description="HTTP timeout (seconds) for browser worker requests")
+    browser_worker_timeout: int = Field(default=900.0, description="HTTP timeout (seconds) for browser worker requests (15 min for approval flow)")
     browser_worker_auth_token: Optional[str] = Field(default=None, description="Authentication token for browser worker API (required for production)")
     
     # Retry Configuration
