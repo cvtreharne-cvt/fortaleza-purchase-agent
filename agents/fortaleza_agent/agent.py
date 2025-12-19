@@ -103,12 +103,13 @@ async def ensure_browser_started():
     return browser
 
 
-def create_adk_tools(product_name: str = ""):
+def create_adk_tools(product_name: str = "", event_id: str = ""):
     """
     Create ADK-compatible tool definitions.
 
     Args:
         product_name: Product name for search fallback if direct link fails
+        event_id: Unique event ID for this purchase attempt (used for approval flow)
     """
     use_worker = browser_service.is_enabled()
 
@@ -488,8 +489,8 @@ async def run_purchase_agent(
 
     try:
         async with managed_browser():
-            # Create tools with product_name for search fallback
-            tools = create_adk_tools(product_name=product_name)
+            # Create tools with product_name for search fallback and event_id for approval
+            tools = create_adk_tools(product_name=product_name, event_id=event_id)
 
             # Create Agent (following course pattern)
             agent = Agent(
