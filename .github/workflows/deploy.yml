@@ -47,9 +47,12 @@ jobs:
           # Tests run without real credentials - local browser only
           MODE: test
           HEADLESS: "true"
-          # Ensure no production calls
+          # Disable all external services
+          USE_SECRET_MANAGER: "false"
           BROWSER_WORKER_URL: ""
           CONFIRM_PROD: "NO"
+          # Provide dummy values to satisfy Pydantic validation
+          WEBHOOK_BASE_URL: "http://localhost:8080"
 
   # Job 2: Build and push Docker image (only on main branch)
   build:
