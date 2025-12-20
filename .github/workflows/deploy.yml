@@ -40,7 +40,9 @@ jobs:
 
       - name: Run tests
         run: |
-          pytest tests/ -v
+          # Skip integration tests in CI - they need real credentials and are slow
+          # Run integration tests locally with: pytest tests/ -v
+          pytest tests/ -v -m "not integration"
         env:
           # Tests run without real credentials - local browser only
           MODE: test
