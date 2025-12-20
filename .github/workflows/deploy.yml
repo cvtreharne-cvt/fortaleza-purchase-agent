@@ -1,0 +1,188 @@
+name: Test and Deploy
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:  # Allow manual triggering
+
+env:
+  PROJECT_ID: fortaleza-purchase-agent
+  REGION: us-central1
+  SERVICE_NAME: fortaleza-agent
+
+jobs:
+  # Job 1: Run tests on every PR and push
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio
+
+      - name: Run tests
+        run: |
+          pytest tests/ -v
+        env:
+          # Tests run without real credentials
+          MODE: test
+
+  # Job 2: Build and push Docker image (only on main branch)
+  build:
+    name: Build Container
+    needs: test  # Only run if tests pass
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.build.outputs.image_tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker us-central1-docker.pkg.dev
+
+      - name: Build and push Docker image
+        id: build
+        run: |
+          # Use git SHA as tag for traceability
+          IMAGE_TAG="us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/agents/fortaleza:${{ github.sha }}"
+
+          echo "Building image: $IMAGE_TAG"
+          docker build -t $IMAGE_TAG .
+
+          echo "Pushing image to Artifact Registry..."
+          docker push $IMAGE_TAG
+
+          # Also tag as 'latest'
+          docker tag $IMAGE_TAG "us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/agents/fortaleza:latest"
+          docker push "us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/agents/fortaleza:latest"
+
+          # Output for next job
+          echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "✅ Image built and pushed: $IMAGE_TAG"
+
+  # Job 3: Deploy with Terraform (only on main branch)
+  deploy:
+    name: Deploy to Cloud Run
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.5.7
+
+      - name: Create Terraform variables file
+        run: |
+          cd terraform
+          cat > terraform.auto.tfvars <<EOF
+          container_image    = "${{ needs.build.outputs.image_tag }}"
+          browser_worker_url = "${{ secrets.BROWSER_WORKER_URL }}"
+          webhook_base_url   = "${{ secrets.WEBHOOK_BASE_URL }}"
+          # browser_worker_auth_token comes from Secret Manager, not here
+          EOF
+
+      - name: Terraform Init
+        run: |
+          cd terraform
+          terraform init
+
+      - name: Terraform Plan
+        id: plan
+        run: |
+          cd terraform
+          terraform plan -out=tfplan -no-color
+        continue-on-error: true
+
+      - name: Terraform Apply
+        run: |
+          cd terraform
+          terraform apply -auto-approve tfplan
+
+      - name: Get Service URL
+        id: service_url
+        run: |
+          cd terraform
+          URL=$(terraform output -raw service_url)
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "🚀 Service deployed to: $URL"
+
+      - name: Smoke Test
+        run: |
+          echo "Running smoke test..."
+          URL="${{ steps.service_url.outputs.url }}"
+
+          # Wait a bit for service to be ready
+          sleep 10
+
+          # Test health endpoint
+          if curl -f -s "$URL/health" | grep -q "ok"; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed"
+            exit 1
+          fi
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ Deployed to: ${{ steps.service_url.outputs.url }}'
+            })
+
+      - name: Deployment Summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY <<EOF
+          ## 🚀 Deployment Successful
+
+          **Image:** \`${{ needs.build.outputs.image_tag }}\`
+          **Service URL:** ${{ steps.service_url.outputs.url }}
+          **Commit:** ${{ github.sha }}
+          **Branch:** ${{ github.ref_name }}
+
+          ### Smoke Test
+          ✅ Health check passed
+          EOF
