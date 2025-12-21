@@ -144,6 +144,7 @@ class TestApprovalEndpoints:
         assert response.status_code == 404
 
 
+@pytest.mark.rate_limit
 class TestRateLimiting:
     """Tests for rate limiting on approval endpoints."""
 

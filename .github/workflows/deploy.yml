@@ -40,9 +40,11 @@ jobs:
 
       - name: Run tests
         run: |
-          # Skip integration tests in CI - they need real credentials and are slow
-          # Run integration tests locally with: pytest tests/ -v
-          pytest tests/ -v -m "not integration"
+          # Skip integration and rate_limit tests in CI
+          # Integration tests need real credentials
+          # Rate limit tests are disabled in test mode
+          # Run full test suite locally with: pytest tests/ -v
+          pytest tests/ -v -m "not integration and not rate_limit"
         env:
           # Tests run without real credentials - local browser only
           MODE: test
