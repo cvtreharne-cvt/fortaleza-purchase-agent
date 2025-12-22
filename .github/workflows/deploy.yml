@@ -145,9 +145,10 @@ jobs:
         run: |
           cd terraform
           terraform plan -out=tfplan -no-color
-        continue-on-error: true
 
       - name: Terraform Apply
+        # Only apply if plan succeeded
+        if: success()
         run: |
           cd terraform
           terraform apply -auto-approve tfplan

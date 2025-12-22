@@ -64,3 +64,11 @@ variable "approval_flow_timeout_seconds" {
   type        = number
   default     = 900  # 15 minutes for human approval
 }
+
+# Monitoring and Alerting
+variable "alert_email" {
+  description = "Email address for security alerts (leave empty to disable email alerts)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}

@@ -22,10 +22,10 @@ This directory contains Infrastructure as Code (IaC) for deploying the Fortaleza
    gcloud config set project fortaleza-purchase-agent
    ```
 
-3. **Container Image** built and pushed to GCR
+3. **Container Image** built and pushed to Artifact Registry
    ```bash
-   docker build -t gcr.io/fortaleza-purchase-agent/fortaleza-agent:latest .
-   docker push gcr.io/fortaleza-purchase-agent/fortaleza-agent:latest
+   docker build -t us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:latest .
+   docker push us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:latest
    ```
 
 ## Initial Setup
@@ -152,11 +152,11 @@ After building a new image:
 
 ```bash
 # 1. Push new image
-docker build -t gcr.io/fortaleza-purchase-agent/fortaleza-agent:v1.2.3 .
-docker push gcr.io/fortaleza-purchase-agent/fortaleza-agent:v1.2.3
+docker build -t us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:v1.2.3 .
+docker push us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:v1.2.3
 
 # 2. Update terraform.tfvars
-container_image = "gcr.io/fortaleza-purchase-agent/fortaleza-agent:v1.2.3"
+container_image = "us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:v1.2.3"
 
 # 3. Apply changes
 terraform apply
@@ -290,8 +290,8 @@ terraform apply
 
 **Solution:** Build and push:
 ```bash
-docker build -t gcr.io/fortaleza-purchase-agent/fortaleza-agent:latest .
-docker push gcr.io/fortaleza-purchase-agent/fortaleza-agent:latest
+docker build -t us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:latest .
+docker push us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:latest
 ```
 
 ### Changes Not Applying
@@ -378,8 +378,133 @@ terraform apply
 - [ ] Add automated testing (terraform validate in CI/CD)
 - [ ] Document secret rotation procedure
 
+## Emergency Procedures
+
+### Rollback to Previous Version
+
+If a deployment causes issues, you can quickly rollback:
+
+**Option 1: Rollback via Cloud Run Console (Fastest)**
+```bash
+# List recent revisions
+gcloud run revisions list --service=fortaleza-agent --region=us-central1
+
+# Rollback to previous revision
+gcloud run services update-traffic fortaleza-agent \
+  --region=us-central1 \
+  --to-revisions=fortaleza-agent-00027-xyz=100
+```
+
+**Option 2: Rollback via Terraform**
+```bash
+# Revert to previous image
+terraform apply -var="container_image=us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:PREVIOUS_SHA"
+
+# Or revert Terraform files to previous commit
+git checkout HEAD~1 -- terraform/
+terraform apply
+```
+
+**Option 3: Emergency Disable**
+```bash
+# Scale to zero instances (stops serving traffic)
+gcloud run services update fortaleza-agent \
+  --region=us-central1 \
+  --min-instances=0 \
+  --max-instances=0
+
+# Re-enable when fixed
+gcloud run services update fortaleza-agent \
+  --region=us-central1 \
+  --min-instances=0 \
+  --max-instances=1
+```
+
+### Secrets Rotation
+
+Rotate secrets periodically or when compromised:
+
+**1. Rotate HMAC Webhook Secret (PI_WEBHOOK_SHARED_SECRET)**
+
+```bash
+# Generate new secret
+NEW_SECRET=$(openssl rand -hex 32)
+
+# Update in GCP Secret Manager
+echo -n "$NEW_SECRET" | gcloud secrets versions add pi_webhook_shared_secret --data-file=-
+
+# Update on Raspberry Pi
+ssh pi@bnb-worker.treharne.com
+# Edit .env file with new secret
+# Restart Pi webhook service
+
+# Cloud Run picks up new version automatically (within ~1 hour)
+# Or force immediate refresh:
+gcloud run services update fortaleza-agent --region=us-central1
+```
+
+**2. Rotate Browser Worker Auth Token**
+
+```bash
+# Generate new token
+NEW_TOKEN=$(openssl rand -base64 32)
+
+# Update in GCP Secret Manager
+echo -n "$NEW_TOKEN" | gcloud secrets versions add browser_worker_auth_token --data-file=-
+
+# Update on Raspberry Pi
+ssh pi@bnb-worker.treharne.com
+# Update BROWSER_WORKER_AUTH_TOKEN in Pi's .env
+# Restart browser worker service
+
+# Force Cloud Run to pick up new version
+gcloud run services update fortaleza-agent --region=us-central1
+```
+
+**3. Rotate B&B Account Credentials**
+
+```bash
+# Change password on B&B website first
+# Then update in Secret Manager:
+echo -n "NEW_PASSWORD" | gcloud secrets versions add bnb_password --data-file=-
+
+# Force Cloud Run refresh
+gcloud run services update fortaleza-agent --region=us-central1
+```
+
+**4. Rotate Pushover Credentials**
+
+```bash
+# Get new token from Pushover dashboard
+# Update in Secret Manager:
+echo -n "NEW_TOKEN" | gcloud secrets versions add pushover_app_token --data-file=-
+echo -n "NEW_USER_KEY" | gcloud secrets versions add pushover_user_key --data-file=-
+```
+
+**Best Practices:**
+- Test new secrets in a curl/postman request before rotating
+- Keep old secret version for 24 hours in case of issues
+- Document rotation in a changelog
+- Set calendar reminders for quarterly rotation
+
+**Secret Version Management:**
+```bash
+# List all versions of a secret
+gcloud secrets versions list SECRET_NAME
+
+# Access specific version
+gcloud secrets versions access VERSION_NUMBER --secret=SECRET_NAME
+
+# Disable old version (after confirming new one works)
+gcloud secrets versions disable VERSION_NUMBER --secret=SECRET_NAME
+
+# Destroy old version permanently (after 30 days)
+gcloud secrets versions destroy VERSION_NUMBER --secret=SECRET_NAME
+```
+
 ## Resources
 
 - [Terraform Google Provider Docs](https://registry.terraform.io/providers/hashicorp/google/latest/docs)
 - [Cloud Run Terraform Reference](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/cloud_run_service)
 - [Terraform Best Practices](https://www.terraform-best-practices.com/)
+- [GCP Secret Manager Best Practices](https://cloud.google.com/secret-manager/docs/best-practices)
