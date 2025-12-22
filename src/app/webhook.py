@@ -169,8 +169,16 @@ def verify_timestamp(timestamp: str, tolerance_seconds: int = 300) -> None:
     
     current_time = int(time.time())
     age = abs(current_time - request_time)
-    
+
     if age > tolerance_seconds:
+        logger.warning(
+            "Invalid timestamp - exceeds tolerance",
+            timestamp=timestamp,
+            age_seconds=age,
+            tolerance_seconds=tolerance_seconds,
+            security_event="invalid_timestamp",
+            severity="WARNING"
+        )
         raise TimestampTooOldError(
             f"Request timestamp is {age}s old, exceeds tolerance of {tolerance_seconds}s"
         )
@@ -179,14 +187,20 @@ def verify_timestamp(timestamp: str, tolerance_seconds: int = 300) -> None:
 def check_idempotency(event_id: str) -> None:
     """
     Check if event has already been processed.
-    
+
     Args:
         event_id: Unique event identifier
-        
+
     Raises:
         DuplicateEventError: If event has already been processed
     """
     if event_id in _processed_events:
+        logger.warning(
+            "Duplicate event detected - possible replay attack",
+            event_id=event_id,
+            security_event="duplicate_event",
+            severity="WARNING"
+        )
         raise DuplicateEventError(f"Event {event_id} has already been processed")
     
     # Mark as processed
@@ -229,12 +243,18 @@ async def handle_webhook(
         secret_manager = get_secret_manager()
         webhook_secret = secret_manager.get_webhook_secret()
         
+        # Get client IP for security logging
+        client_ip = request.client.host if request.client else "unknown"
+
         # Verify HMAC signature
         if not verify_hmac_signature(body, x_timestamp, x_signature, webhook_secret):
             logger.error(
                 "Invalid webhook signature",
                 event_id=payload.event_id,
-                timestamp=x_timestamp
+                timestamp=x_timestamp,
+                client_ip=client_ip,
+                security_event="failed_hmac",  # For GCP log-based metrics
+                severity="WARNING"
             )
             raise InvalidSignatureError("Invalid HMAC signature")
         
