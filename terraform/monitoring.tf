@@ -26,14 +26,6 @@ resource "google_logging_metric" "failed_hmac_attempts" {
   label_extractors = {
     "client_ip" = "EXTRACT(jsonPayload.client_ip)"
   }
-
-  bucket_options {
-    linear_buckets {
-      num_finite_buckets = 10
-      width             = 1
-      offset            = 0
-    }
-  }
 }
 
 # Log-based metric for invalid timestamp attempts
@@ -153,6 +145,63 @@ resource "google_monitoring_alert_policy" "failed_hmac_alert" {
       5. If from your Pi's IP: check Pi webhook configuration
 
       **Note:** Your service is protected - invalid requests are rejected.
+    EOT
+  }
+}
+
+# Alert policy for invalid timestamp attempts
+resource "google_monitoring_alert_policy" "invalid_timestamp_alert" {
+  display_name = "Security: Multiple Invalid Timestamp Attempts"
+  combiner     = "OR"
+
+  conditions {
+    display_name = "Invalid timestamp attempts > 5 in 5 minutes"
+
+    condition_threshold {
+      filter          = "resource.type=\"cloud_run_revision\" AND metric.type=\"logging.googleapis.com/user/${google_logging_metric.invalid_timestamp_attempts.name}\""
+      duration        = "60s"
+      comparison      = "COMPARISON_GT"
+      threshold_value = 5
+
+      aggregations {
+        alignment_period   = "300s"  # 5 minutes
+        per_series_aligner = "ALIGN_SUM"
+      }
+
+      trigger {
+        count = 1
+      }
+    }
+  }
+
+  notification_channels = var.alert_email != "" ? [google_monitoring_notification_channel.email_alerts[0].id] : []
+
+  alert_strategy {
+    auto_close = "86400s"  # Auto-close after 24 hours
+  }
+
+  documentation {
+    content = <<-EOT
+      ## Security Alert: Multiple Invalid Timestamp Attempts
+
+      This alert indicates **multiple webhook requests with invalid timestamps**.
+
+      **What happened:**
+      - 5 or more requests with timestamps outside the allowed tolerance window (±5 minutes)
+      - This could indicate:
+        - Clock skew on the client (Pi)
+        - Replay attack using old captured requests
+        - Misconfigured client
+
+      **What to do:**
+      1. Check Cloud Logging for details: https://console.cloud.google.com/logs
+      2. Filter by: `jsonPayload.security_event="invalid_timestamp"`
+      3. Review the timestamps and age_seconds values
+      4. If from your Pi's IP: check Pi system time (run `date` on Pi)
+      5. If timestamps are very old: likely replay attack
+      6. If timestamps are slightly off: clock drift (sync with NTP)
+
+      **Note:** Invalid requests are rejected - your service is protected.
     EOT
   }
 }
