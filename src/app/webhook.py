@@ -76,6 +76,13 @@ def check_rate_limit(client_ip: str) -> None:
     Raises:
         HTTPException: If rate limit exceeded (429 Too Many Requests)
     """
+    from ..core.config import get_settings, Mode
+
+    # Skip rate limiting in test mode
+    settings = get_settings()
+    if settings.mode == Mode.TEST:
+        return
+
     current_time = time.time()
 
     # Periodic cleanup to prevent memory leak
