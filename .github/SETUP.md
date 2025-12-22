@@ -10,18 +10,71 @@ The workflow automatically:
 
 ## Prerequisites
 
-- GitHub repository with admin access
-- Google Cloud project with Cloud Run enabled
-- Terraform configuration in `terraform/` directory
+### Required Tools
+
+1. **Terraform** (v1.5.0+)
+   ```bash
+   # macOS (Homebrew)
+   brew tap hashicorp/tap
+   brew install hashicorp/tap/terraform
+
+   # Verify installation
+   terraform version
+   ```
+
+2. **Google Cloud SDK** (`gcloud`)
+   ```bash
+   # macOS (Homebrew)
+   brew install google-cloud-sdk
+
+   # Authenticate
+   gcloud auth login
+   gcloud auth application-default login
+
+   # Set project
+   gcloud config set project fortaleza-purchase-agent
+   ```
+
+3. **GitHub CLI** (optional, for creating PRs)
+   ```bash
+   brew install gh
+   gh auth login
+   ```
+
+### Required Access
+
+- **GitHub Repository**: Admin access to configure secrets and workflows
+- **GCP Project**: Owner or Editor role on `fortaleza-purchase-agent`
+- **GCP APIs Enabled**:
+  - Cloud Run API
+  - Cloud Build API (for container builds)
+  - Artifact Registry API
+  - Secret Manager API
+  - IAM API
+
+### Verify Setup
+
+```bash
+# Check you can access GCP
+gcloud projects describe fortaleza-purchase-agent
+
+# Check GitHub access
+gh repo view cvtreharne-cvt/fortaleza-purchase-agent
+
+# Verify Terraform
+cd terraform && terraform init
+```
 
 ## Setup Steps
 
-### 1. Create a GCP Service Account
+### 1. Set Up Workload Identity Federation (WIF)
 
-This service account will be used by GitHub Actions to deploy to GCP.
+**Why WIF?** More secure than JSON keys - no long-lived credentials to manage or rotate.
+
+#### Step 1a: Create GCP Service Account
 
 ```bash
-# Create service account
+# Create service account for GitHub Actions
 gcloud iam service-accounts create github-actions-fortaleza-agent \
   --display-name="GitHub Actions - Fortaleza Agent" \
   --project=fortaleza-purchase-agent
@@ -29,7 +82,7 @@ gcloud iam service-accounts create github-actions-fortaleza-agent \
 # Get the email
 SA_EMAIL="github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
 
-# Grant ONLY deployment permissions
+# Grant deployment permissions
 gcloud projects add-iam-policy-binding fortaleza-purchase-agent \
   --member="serviceAccount:$SA_EMAIL" \
   --role="roles/run.admin"
@@ -42,18 +95,70 @@ gcloud projects add-iam-policy-binding fortaleza-purchase-agent \
   --member="serviceAccount:$SA_EMAIL" \
   --role="roles/iam.serviceAccountUser"
 
-# Create and download key
-gcloud iam service-accounts keys create ~/github-actions-key.json \
-  --iam-account=$SA_EMAIL
-
-# Display the key (copy this for GitHub)
-cat ~/github-actions-key.json
+gcloud projects add-iam-policy-binding fortaleza-purchase-agent \
+  --member="serviceAccount:$SA_EMAIL" \
+  --role="roles/artifactregistry.writer"
 ```
 
-**⚠️ Important:** Delete this key file after adding to GitHub:
+#### Step 1b: Create Workload Identity Pool
+
 ```bash
-rm ~/github-actions-key.json
+# Create Workload Identity Pool
+gcloud iam workload-identity-pools create "github-pool" \
+  --project="fortaleza-purchase-agent" \
+  --location="global" \
+  --display-name="GH Actions Pool Fortaleza Agent"
+
+# Get the pool ID
+POOL_ID=$(gcloud iam workload-identity-pools describe github-pool \
+  --project="fortaleza-purchase-agent" \
+  --location="global" \
+  --format="value(name)")
+
+echo "Pool ID: $POOL_ID"
 ```
+
+#### Step 1c: Create GitHub OIDC Provider
+
+```bash
+# Create GitHub OIDC provider
+gcloud iam workload-identity-pools providers create-oidc "github-provider" \
+  --project="fortaleza-purchase-agent" \
+  --location="global" \
+  --workload-identity-pool="github-pool" \
+  --display-name="GitHub Provider" \
+  --attribute-mapping="google.subject=assertion.sub,attribute.actor=assertion.actor,attribute.repository=assertion.repository,attribute.repository_owner=assertion.repository_owner" \
+  --attribute-condition="assertion.repository_owner=='cvtreharne-cvt'" \
+  --issuer-uri="https://token.actions.githubusercontent.com"
+```
+
+#### Step 1d: Bind Service Account to GitHub Repo
+
+```bash
+# Allow GitHub Actions from your repo to impersonate the service account
+gcloud iam service-accounts add-iam-policy-binding \
+  "github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com" \
+  --project="fortaleza-purchase-agent" \
+  --role="roles/iam.workloadIdentityUser" \
+  --member="principalSet://iam.googleapis.com/projects/YOUR_PROJECT_NUMBER/locations/global/workloadIdentityPools/github-pool/attribute.repository/cvtreharne-cvt/fortaleza-purchase-agent"
+
+# Get your project number:
+gcloud projects describe fortaleza-purchase-agent --format="value(projectNumber)"
+# Replace YOUR_PROJECT_NUMBER above with the output
+```
+
+#### Step 1e: Get WIF Provider Name
+
+```bash
+# Get the full WIF provider name for GitHub secrets
+gcloud iam workload-identity-pools providers describe github-provider \
+  --project="fortaleza-purchase-agent" \
+  --location="global" \
+  --workload-identity-pool="github-pool" \
+  --format="value(name)"
+```
+
+**Copy this output** - you'll add it as `WIF_PROVIDER` in GitHub secrets.
 
 ### 2. Add GitHub Secrets
 
@@ -64,17 +169,17 @@ Go to your repository on GitHub:
 
 | Secret Name | Description | How to Get |
 |-------------|-------------|------------|
-| `GCP_SA_KEY` | Service account JSON key | Output from step 1 above |
+| `WIF_PROVIDER` | Workload Identity Provider name | Output from step 1e above |
 | `BROWSER_WORKER_URL` | Browser worker URL | Your Cloudflare tunnel URL |
 | `BROWSER_WORKER_AUTH_TOKEN` | Worker auth token | Your auth token |
 | `WEBHOOK_BASE_URL` | Cloud Run URL for webhooks | `https://fortaleza-agent-xxxxx.run.app` |
 
 #### Adding Each Secret
 
-For `GCP_SA_KEY`:
+For `WIF_PROVIDER`:
 ```
-Name: GCP_SA_KEY
-Value: [Paste entire JSON key from step 1]
+Name: WIF_PROVIDER
+Value: [Paste the WIF provider name from step 1e]
 ```
 
 For `BROWSER_WORKER_URL`:

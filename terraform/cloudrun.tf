@@ -12,10 +12,20 @@ resource "google_cloud_run_service" "fortaleza_agent" {
         image = var.container_image
 
         # Resource limits
+        # Why 512 MB RAM?
+        # - Browser runs remotely on Pi (via browser_worker_url), not in Cloud Run
+        # - Cloud Run only runs FastAPI app + webhook handling + ADK agent
+        # - Typical memory usage: ~150-250 MB during purchase flow
+        # - 512 MB provides comfortable headroom for:
+        #   * FastAPI framework
+        #   * Gemini ADK agent with tool execution
+        #   * HTTP clients (requests library)
+        #   * Concurrent requests during approval flow
+        # - Could reduce to 256 MB for cost savings if needed
         resources {
           limits = {
-            cpu    = "1000m"  # 1 CPU
-            memory = "512Mi"  # 512 MB RAM
+            cpu    = "1000m"  # 1 CPU (standard for Python web apps)
+            memory = "512Mi"  # 512 MB RAM (see comment above)
           }
         }
 
