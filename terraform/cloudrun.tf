@@ -36,6 +36,11 @@ resource "google_cloud_run_service" "fortaleza_agent" {
         }
 
         env {
+          name  = "CONFIRM_PROD"
+          value = "YES"
+        }
+
+        env {
           name  = "HEADLESS"
           value = "true"
         }
