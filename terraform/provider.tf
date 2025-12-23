@@ -5,6 +5,23 @@ terraform {
   # Specify the minimum Terraform version required
   required_version = ">= 1.5.0"
 
+  # Remote state backend - stores Terraform state in GCS
+  # This allows both local development and GitHub Actions CI/CD to share
+  # the same state, preventing resource conflicts and duplication.
+  #
+  # The bucket was created manually (see terraform/iam.tf for details)
+  # before Terraform was initialized to avoid circular dependencies.
+  #
+  # Benefits:
+  # - Single source of truth for infrastructure state
+  # - Automatic state locking during operations
+  # - State versioning and backup in GCS
+  # - Shared access between local and CI/CD environments
+  backend "gcs" {
+    bucket = "fortaleza-purchase-agent-tfstate"
+    prefix = "terraform/state"
+  }
+
   # Declare which providers we need
   required_providers {
     google = {

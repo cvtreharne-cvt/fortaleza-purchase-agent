@@ -15,6 +15,22 @@ resource "google_secret_manager_secret_iam_member" "secret_access" {
 }
 
 # Grant GitHub Actions service account permissions for CI/CD
+#
+# Note: The Terraform state bucket (fortaleza-purchase-agent-tfstate) and
+# GitHub Actions' access to it are managed OUTSIDE of Terraform to avoid
+# circular dependencies (the bucket stores Terraform's own state).
+#
+# Bootstrap resources were created manually:
+#   gcloud storage buckets create gs://fortaleza-purchase-agent-tfstate \
+#     --location=us-central1 --uniform-bucket-level-access
+#
+#   gcloud storage buckets add-iam-policy-binding \
+#     gs://fortaleza-purchase-agent-tfstate \
+#     --member="serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com" \
+#     --role="roles/storage.objectAdmin"
+#
+# This is a best practice: state storage infrastructure should be managed
+# separately from the infrastructure it tracks.
 
 # 1. Permission to push images to Artifact Registry
 resource "google_artifact_registry_repository_iam_member" "github_actions_writer" {
