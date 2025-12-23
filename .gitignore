@@ -88,5 +88,4 @@ terraform/terraform.tfvars
 
 #Ignore excalidraw diagrams and the demo video (too large to commit)
 *.mov
-*.png
 *.excalidraw
