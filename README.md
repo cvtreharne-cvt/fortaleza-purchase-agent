@@ -389,7 +389,7 @@ gcloud run deploy fortaleza-agent \
   --cpu 1 \
   --memory 1Gi \
   --timeout 540 \
-  --set-env-vars MODE=prod,HEADLESS=true,GCP_PROJECT_ID=fortaleza-agent-prod
+  --set-env-vars MODE=prod,CONFIRM_PROD=YES,HEADLESS=true,GCP_PROJECT_ID=fortaleza-agent-prod
 ```
 
 ### 7. Update Raspberry Pi Script
