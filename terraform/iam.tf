@@ -32,6 +32,41 @@ resource "google_project_iam_member" "github_actions_compute_viewer" {
   member  = "serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
 }
 
+# 3. Permission to manage Secret Manager secrets (needed by Terraform)
+resource "google_project_iam_member" "github_actions_secret_admin" {
+  project = var.project_id
+  role    = "roles/secretmanager.admin"
+  member  = "serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
+}
+
+# 4. Permission to manage Cloud Run services (needed by Terraform)
+resource "google_project_iam_member" "github_actions_run_admin" {
+  project = var.project_id
+  role    = "roles/run.admin"
+  member  = "serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
+}
+
+# 5. Permission to manage Monitoring resources (needed by Terraform)
+resource "google_project_iam_member" "github_actions_monitoring_admin" {
+  project = var.project_id
+  role    = "roles/monitoring.admin"
+  member  = "serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
+}
+
+# 6. Permission to manage IAM policies (needed by Terraform to create IAM bindings)
+resource "google_project_iam_member" "github_actions_iam_admin" {
+  project = var.project_id
+  role    = "roles/iam.securityAdmin"
+  member  = "serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
+}
+
+# 7. Permission to act as service accounts (needed for Cloud Run deployment)
+resource "google_project_iam_member" "github_actions_service_account_user" {
+  project = var.project_id
+  role    = "roles/iam.serviceAccountUser"
+  member  = "serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
+}
+
 # Output the service account email for reference
 output "service_account_email" {
   description = "Service account used by Cloud Run"
