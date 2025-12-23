@@ -69,14 +69,21 @@ resource "google_project_iam_member" "github_actions_monitoring_admin" {
   member  = "serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
 }
 
-# 6. Permission to manage IAM policies (needed by Terraform to create IAM bindings)
+# 6. Permission to manage Logging resources including log-based metrics (needed by Terraform)
+resource "google_project_iam_member" "github_actions_logging_admin" {
+  project = var.project_id
+  role    = "roles/logging.admin"
+  member  = "serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
+}
+
+# 7. Permission to manage IAM policies (needed by Terraform to create IAM bindings)
 resource "google_project_iam_member" "github_actions_iam_admin" {
   project = var.project_id
   role    = "roles/iam.securityAdmin"
   member  = "serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
 }
 
-# 7. Permission to act as service accounts (needed for Cloud Run deployment)
+# 8. Permission to act as service accounts (needed for Cloud Run deployment)
 resource "google_project_iam_member" "github_actions_service_account_user" {
   project = var.project_id
   role    = "roles/iam.serviceAccountUser"
