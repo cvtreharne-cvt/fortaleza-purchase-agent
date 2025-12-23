@@ -5,6 +5,13 @@ terraform {
   # Specify the minimum Terraform version required
   required_version = ">= 1.5.0"
 
+  # Remote state backend - stores Terraform state in GCS
+  # This allows both local and GitHub Actions to share the same state
+  backend "gcs" {
+    bucket = "fortaleza-purchase-agent-tfstate"
+    prefix = "terraform/state"
+  }
+
   # Declare which providers we need
   required_providers {
     google = {
