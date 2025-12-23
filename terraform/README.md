@@ -22,7 +22,25 @@ This directory contains Infrastructure as Code (IaC) for deploying the Fortaleza
    gcloud config set project fortaleza-purchase-agent
    ```
 
-3. **Container Image** built and pushed to Artifact Registry
+3. **Required GCP APIs enabled** (one-time setup)
+   
+   **⚠️ Important:** These APIs must be enabled before running Terraform.
+   
+   ```bash
+   # Required for Terraform to manage infrastructure
+   gcloud services enable cloudresourcemanager.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable iam.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable secretmanager.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable run.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable artifactregistry.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable monitoring.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable logging.googleapis.com --project=fortaleza-purchase-agent
+   ```
+   
+   **Why manual?** To enable APIs via Terraform would require `serviceusage.googleapis.com`
+   already enabled (chicken-and-egg problem). See `terraform/apis.tf` for details.
+
+4. **Container Image** built and pushed to Artifact Registry
    ```bash
    docker build -t us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:latest .
    docker push us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:latest
