@@ -231,33 +231,74 @@ Terraform tracks your infrastructure in `terraform.tfstate`:
 - Stores resource IDs, metadata, dependencies
 - **Contains sensitive data!** (gitignored)
 
-### State File Location
+### Remote State Backend (GCS)
 
-**Current:** Local file (`terraform.tfstate`)
-- ✅ Simple for single developer
-- ❌ Can't share with team
-- ❌ No locking (risk of conflicts)
+**This project uses remote state storage** in Google Cloud Storage for:
+- ✅ Shared state between local development and GitHub Actions CI/CD
+- ✅ Automatic state locking to prevent conflicts
+- ✅ State versioning and backup
+- ✅ Team collaboration support
 
-**Production:** Remote backend (e.g., GCS bucket)
-- ✅ Shared across team
-- ✅ Locking prevents conflicts
-- ✅ Versioned and backed up
+### First-Time Remote State Setup
 
-### Upgrading to Remote State
+**⚠️ One-time manual setup** (already completed for this project):
 
-```hcl
-# Add to provider.tf
-terraform {
-  backend "gcs" {
-    bucket = "fortaleza-terraform-state"
-    prefix = "prod"
-  }
-}
+The state bucket must be created **before** Terraform initialization to avoid
+circular dependencies (the bucket can't store its own creation state).
+
+```bash
+# 1. Create the state bucket
+gcloud storage buckets create gs://fortaleza-purchase-agent-tfstate \
+  --location=us-central1 \
+  --uniform-bucket-level-access
+
+# 2. Enable versioning for state backup/recovery
+gcloud storage buckets update gs://fortaleza-purchase-agent-tfstate \
+  --versioning
+
+# 3. Enable public access prevention (security best practice)
+gcloud storage buckets update gs://fortaleza-purchase-agent-tfstate \
+  --public-access-prevention
+
+# 4. Grant GitHub Actions access to the bucket
+gcloud storage buckets add-iam-policy-binding \
+  gs://fortaleza-purchase-agent-tfstate \
+  --member="serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+
+# 5. Initialize Terraform with remote backend (migrate local state)
+cd terraform
+terraform init -migrate-state
 ```
 
-Then:
+**Why manual?** The state bucket is "meta-infrastructure" - if managed by
+Terraform, deleting it would also delete the state file tracking it. This
+is a best practice for bootstrap resources.
+
+### State Management
+
 ```bash
-terraform init -migrate-state
+# View current state location
+terraform state list
+
+# The state is stored at:
+# gs://fortaleza-purchase-agent-tfstate/terraform/state/default.tfstate
+
+# Access state directly (rarely needed)
+gcloud storage cat gs://fortaleza-purchase-agent-tfstate/terraform/state/default.tfstate
+```
+
+### State Recovery
+
+If state becomes corrupted:
+
+```bash
+# List state versions in GCS
+gcloud storage ls -l gs://fortaleza-purchase-agent-tfstate/terraform/state/
+
+# Download a previous version
+gcloud storage cp gs://fortaleza-purchase-agent-tfstate/terraform/state/default.tfstate#<generation> \
+  ./terraform.tfstate.backup
 ```
 
 ## Troubleshooting
