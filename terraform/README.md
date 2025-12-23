@@ -502,6 +502,98 @@ gcloud secrets versions disable VERSION_NUMBER --secret=SECRET_NAME
 gcloud secrets versions destroy VERSION_NUMBER --secret=SECRET_NAME
 ```
 
+## Testing Security Alerts
+
+After deploying the monitoring infrastructure, you can manually test the security alerts to verify they're working correctly.
+
+### Test 1: Failed HMAC Authentication
+
+Trigger the failed HMAC alert by sending requests with invalid signatures:
+
+```bash
+# Get your webhook URL from terraform output
+WEBHOOK_URL=$(terraform output -raw service_url)/webhook/pi
+
+# Send 6 requests with invalid HMAC signatures (threshold is >5 in 5 minutes)
+for i in {1..6}; do
+  curl -X POST "$WEBHOOK_URL" \
+    -H "Content-Type: application/json" \
+    -H "X-Signature: invalid-signature-$i" \
+    -H "X-Timestamp: $(date +%s)" \
+    -d '{"event_id":"test-'$i'","event_type":"purchase_requested","product_name":"Test","product_url":"https://example.com"}'
+  sleep 1
+done
+```
+
+**Expected:** Alert fires within 2-5 minutes, email sent to configured address.
+
+### Test 2: Invalid Timestamp
+
+Trigger the invalid timestamp alert by sending requests with old timestamps:
+
+```bash
+# Send requests with timestamp 6+ minutes old (tolerance is ±5 minutes)
+OLD_TIMESTAMP=$(($(date +%s) - 400))  # 6 minutes 40 seconds ago
+
+for i in {1..6}; do
+  curl -X POST "$WEBHOOK_URL" \
+    -H "Content-Type: application/json" \
+    -H "X-Signature: any-signature" \
+    -H "X-Timestamp: $OLD_TIMESTAMP" \
+    -d '{"event_id":"test-old-'$i'","event_type":"purchase_requested","product_name":"Test","product_url":"https://example.com"}'
+  sleep 1
+done
+```
+
+**Expected:** Alert fires within 2-5 minutes, email sent to configured address.
+
+### Test 3: Duplicate Event (Replay Attack)
+
+Trigger the duplicate event alert by sending the same event_id multiple times:
+
+```bash
+# Send same event_id 6 times (threshold is >0)
+EVENT_ID="test-duplicate-$(date +%s)"
+TIMESTAMP=$(date +%s)
+
+for i in {1..6}; do
+  curl -X POST "$WEBHOOK_URL" \
+    -H "Content-Type: application/json" \
+    -H "X-Signature: test-signature" \
+    -H "X-Timestamp: $TIMESTAMP" \
+    -d '{"event_id":"'$EVENT_ID'","event_type":"purchase_requested","product_name":"Test","product_url":"https://example.com"}'
+  sleep 1
+done
+```
+
+**Expected:** Alert fires within 1-3 minutes, email sent to configured address.
+
+### Verify Security Events
+
+After running tests, check the logs:
+
+```bash
+# View security events in Cloud Logging
+gcloud logging read \
+  'resource.type="cloud_run_revision"
+   resource.labels.service_name="fortaleza-agent"
+   jsonPayload.security_event!=""
+   timestamp>="'$(date -u -d '5 minutes ago' '+%Y-%m-%dT%H:%M:%SZ')'"' \
+  --limit=50 \
+  --project=fortaleza-purchase-agent
+```
+
+Or view in GCP Console:
+- **Logs**: https://console.cloud.google.com/logs/query?project=fortaleza-purchase-agent
+- **Incidents**: https://console.cloud.google.com/monitoring/alerting/incidents?project=fortaleza-purchase-agent
+
+**Alert Timeline:**
+- Event logged: Immediate
+- Metric updated: 1-2 minutes
+- Alert evaluates: Every 60 seconds
+- Email sent: 1-2 minutes after alert fires
+- **Total latency: 2-5 minutes**
+
 ## Resources
 
 - [Terraform Google Provider Docs](https://registry.terraform.io/providers/hashicorp/google/latest/docs)

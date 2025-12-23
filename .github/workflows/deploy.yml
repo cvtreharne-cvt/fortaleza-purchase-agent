@@ -62,6 +62,9 @@ jobs:
     needs: test  # Only run if tests pass
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for Workload Identity Federation
 
     outputs:
       image_tag: ${{ steps.build.outputs.image_tag }}
@@ -109,6 +112,9 @@ jobs:
     needs: build
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for Workload Identity Federation
 
     steps:
       - name: Checkout code
