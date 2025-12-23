@@ -14,13 +14,22 @@ resource "google_secret_manager_secret_iam_member" "secret_access" {
   member    = "serviceAccount:${data.google_compute_default_service_account.default.email}"
 }
 
-# Grant GitHub Actions service account permission to push images to Artifact Registry
+# Grant GitHub Actions service account permissions for CI/CD
+
+# 1. Permission to push images to Artifact Registry
 resource "google_artifact_registry_repository_iam_member" "github_actions_writer" {
   project    = var.project_id
   location   = "us-central1"
   repository = "agents"
   role       = "roles/artifactregistry.writer"
   member     = "serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
+}
+
+# 2. Permission to read Compute Engine resources (needed by Terraform data sources)
+resource "google_project_iam_member" "github_actions_compute_viewer" {
+  project = var.project_id
+  role    = "roles/compute.viewer"
+  member  = "serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com"
 }
 
 # Output the service account email for reference
