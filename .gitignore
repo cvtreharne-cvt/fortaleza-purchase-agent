@@ -84,4 +84,9 @@ terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.backup
 terraform/terraform.tfvars
-terraform/.terraform.lock.hcl
+# NOTE: .terraform.lock.hcl should be committed for provider version consistency
+
+#Ignore excalidraw diagrams and the demo video (too large to commit)
+*.mov
+*.png
+*.excalidraw

@@ -134,6 +134,20 @@ jobs:
         with:
           terraform_version: 1.5.7
 
+      - name: Validate Terraform State Access
+        run: |
+          echo "🔍 Validating access to Terraform state bucket..."
+          if gcloud storage ls gs://fortaleza-purchase-agent-tfstate/terraform/state/ 2>&1 | grep -q "default.tfstate"; then
+            echo "✅ Successfully accessed Terraform state bucket"
+          else
+            echo "❌ Cannot access Terraform state bucket or state file not found"
+            echo "This could indicate:"
+            echo "  - Missing IAM permissions (roles/storage.objectAdmin)"
+            echo "  - State bucket doesn't exist"
+            echo "  - State file not initialized"
+            exit 1
+          fi
+
       - name: Create Terraform variables file
         run: |
           cd terraform

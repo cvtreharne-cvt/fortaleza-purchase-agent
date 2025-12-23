@@ -22,7 +22,25 @@ This directory contains Infrastructure as Code (IaC) for deploying the Fortaleza
    gcloud config set project fortaleza-purchase-agent
    ```
 
-3. **Container Image** built and pushed to Artifact Registry
+3. **Required GCP APIs enabled** (one-time setup)
+   
+   **⚠️ Important:** These APIs must be enabled before running Terraform.
+   
+   ```bash
+   # Required for Terraform to manage infrastructure
+   gcloud services enable cloudresourcemanager.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable iam.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable secretmanager.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable run.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable artifactregistry.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable monitoring.googleapis.com --project=fortaleza-purchase-agent
+   gcloud services enable logging.googleapis.com --project=fortaleza-purchase-agent
+   ```
+   
+   **Why manual?** To enable APIs via Terraform would require `serviceusage.googleapis.com`
+   already enabled (chicken-and-egg problem). See `terraform/apis.tf` for details.
+
+4. **Container Image** built and pushed to Artifact Registry
    ```bash
    docker build -t us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:latest .
    docker push us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:latest
@@ -303,16 +321,131 @@ gcloud storage cp gs://fortaleza-purchase-agent-tfstate/terraform/state/default.
 
 ## Troubleshooting
 
-### "Error 403: Permission denied"
+### Remote State Issues
+
+#### "Error: Failed to get state lock"
+
+**Cause:** Another Terraform process is running or crashed without releasing the lock.
+
+**Symptoms:**
+```
+Error: Error acquiring the state lock
+Lock Info:
+  ID:        1234567890-abcd-1234-5678-0123456789ab
+  Path:      gs://fortaleza-purchase-agent-tfstate/terraform/state/default.tflock
+```
+
+**Solution:**
+```bash
+# 1. Verify no other Terraform processes are running
+ps aux | grep terraform
+
+# 2. If safe, force unlock (use ID from error message)
+terraform force-unlock 1234567890-abcd-1234-5678-0123456789ab
+
+# 3. If force-unlock fails, manually delete lock file
+gcloud storage rm gs://fortaleza-purchase-agent-tfstate/terraform/state/default.tflock
+```
+
+**Prevention:** Always let `terraform apply` complete or use `Ctrl+C` gracefully.
+
+#### "Backend initialization failed" / "Failed to get existing workspaces"
+
+**Cause:** Missing IAM permissions to access state bucket.
+
+**Symptoms:**
+```
+Error: Failed to get existing workspaces: storage: bucket doesn't exist
+Error: Error inspecting states in backend: querying Cloud Storage failed: storage: bucket doesn't exist
+```
+
+**Solution:**
+```bash
+# 1. Verify bucket exists
+gcloud storage ls gs://fortaleza-purchase-agent-tfstate
+
+# 2. Check your permissions
+gcloud storage buckets get-iam-policy gs://fortaleza-purchase-agent-tfstate
+
+# 3. Grant yourself access (for local development)
+gcloud storage buckets add-iam-policy-binding \
+  gs://fortaleza-purchase-agent-tfstate \
+  --member="user:$(gcloud config get-value account)" \
+  --role="roles/storage.objectAdmin"
+
+# 4. For GitHub Actions, ensure service account has access
+gcloud storage buckets add-iam-policy-binding \
+  gs://fortaleza-purchase-agent-tfstate \
+  --member="serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+```
+
+#### "State file corrupt" / "Failed to read state"
+
+**Cause:** State file corrupted due to interrupted write or manual editing.
+
+**Symptoms:**
+```
+Error: Failed to read state: <parse errors>
+Error: state snapshot was created by Terraform vX.Y, which is newer than current vA.B
+```
+
+**Solution - Restore from version history:**
+```bash
+# 1. List available state versions
+gcloud storage ls -l gs://fortaleza-purchase-agent-tfstate/terraform/state/
+
+# Output shows versions with generation numbers:
+#   12345678  2024-01-15  default.tfstate#1705334400000000
+#   12345679  2024-01-16  default.tfstate#1705420800000000 (latest)
+
+# 2. Download a working previous version (use generation number)
+gcloud storage cp \
+  'gs://fortaleza-purchase-agent-tfstate/terraform/state/default.tfstate#1705334400000000' \
+  ./terraform.tfstate
+
+# 3. Push it back as the current state
+gcloud storage cp ./terraform.tfstate \
+  gs://fortaleza-purchase-agent-tfstate/terraform/state/default.tfstate
+
+# 4. Verify recovery
+terraform state list
+```
+
+**Prevention:** Never manually edit `terraform.tfstate`. Always use `terraform state` commands.
+
+#### "Cannot access Terraform state bucket" (CI/CD)
+
+**Cause:** GitHub Actions service account lacks permissions.
+
+**Symptoms:** GitHub Actions workflow fails at "Validate Terraform State Access" step.
+
+**Solution:**
+```bash
+# Grant storage access to GitHub Actions service account
+gcloud storage buckets add-iam-policy-binding \
+  gs://fortaleza-purchase-agent-tfstate \
+  --member="serviceAccount:github-actions-fortaleza-agent@fortaleza-purchase-agent.iam.gserviceaccount.com" \
+  --role="roles/storage.objectAdmin"
+
+# Verify permission granted
+gcloud storage buckets get-iam-policy gs://fortaleza-purchase-agent-tfstate \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:github-actions-fortaleza-agent"
+```
+
+### General Issues
+
+#### "Error 403: Permission denied"
 
 **Solution:** Ensure you're authenticated:
 ```bash
 gcloud auth application-default login
 ```
 
-### "Secret already exists"
+#### "Secret already exists"
 
-**Cause:** Secret exists from previous deployment
+**Cause:** Secret exists from previous deployment but not in Terraform state.
 
 **Solution 1:** Import existing secret:
 ```bash
@@ -325,9 +458,9 @@ gcloud secrets delete bnb_email
 terraform apply
 ```
 
-### "Container image not found"
+#### "Container image not found"
 
-**Cause:** Image hasn't been pushed to GCR
+**Cause:** Image hasn't been pushed to Artifact Registry.
 
 **Solution:** Build and push:
 ```bash
@@ -335,7 +468,19 @@ docker build -t us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/forta
 docker push us-central1-docker.pkg.dev/fortaleza-purchase-agent/agents/fortaleza:latest
 ```
 
-### Changes Not Applying
+#### "API not enabled"
+
+**Cause:** Required GCP API not enabled in project.
+
+**Solution:** Enable the API mentioned in error:
+```bash
+# Example for Cloud Resource Manager API
+gcloud services enable cloudresourcemanager.googleapis.com
+
+# See Prerequisites section for full list of required APIs
+```
+
+#### Changes Not Applying
 
 **Check the plan:**
 ```bash
