@@ -91,6 +91,10 @@ resource "google_monitoring_notification_channel" "email_alerts" {
   labels = {
     email_address = var.alert_email
   }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # Alert policy for failed HMAC attempts
