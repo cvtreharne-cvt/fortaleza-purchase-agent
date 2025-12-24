@@ -38,6 +38,7 @@ class WebhookPayload(BaseModel):
     subject: str = Field(..., description="Email subject line")
     direct_link: str = Field(..., description="Direct link to product page")
     product_hint: str = Field(..., description="Product name hint from email")
+    mode: str | None = Field(default=None, description="Optional mode override: dryrun, test, or prod")
 
 
 def cleanup_rate_limit_store() -> None:
@@ -265,7 +266,8 @@ async def handle_webhook(
             "Webhook received and validated",
             event_id=payload.event_id,
             product_hint=payload.product_hint,
-            direct_link=payload.direct_link
+            direct_link=payload.direct_link,
+            mode_override=payload.mode
         )
 
         # Trigger agent execution in background
@@ -273,7 +275,8 @@ async def handle_webhook(
             run_purchase_agent,
             direct_link=payload.direct_link,
             product_name=payload.product_hint,
-            event_id=payload.event_id
+            event_id=payload.event_id,
+            mode_override=payload.mode
         )
 
         logger.info(

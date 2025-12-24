@@ -456,7 +456,8 @@ def log_agent_events(events: List, event_id: str, product_name: str) -> None:
 async def run_purchase_agent(
     direct_link: str,
     product_name: str,
-    event_id: str
+    event_id: str,
+    mode_override: str | None = None
 ) -> dict:
     """
     Run the ADK-powered purchase agent using course-aligned patterns.
@@ -465,11 +466,32 @@ async def run_purchase_agent(
         direct_link: Direct URL to product from email
         product_name: Product name (for search fallback)
         event_id: Unique event ID for this purchase attempt
+        mode_override: Optional mode override (dryrun, test, or prod) from webhook payload
 
     Returns:
         dict with execution result
     """
     settings = get_settings()
+    
+    # Override mode if specified in webhook payload
+    if mode_override:
+        from src.core.config import Mode
+        try:
+            effective_mode = Mode(mode_override.lower())
+            logger.info(
+                "Mode overridden by webhook payload",
+                environment_mode=settings.mode.value,
+                effective_mode=effective_mode.value
+            )
+        except ValueError:
+            logger.warning(
+                "Invalid mode override in webhook payload, using environment mode",
+                invalid_mode=mode_override,
+                environment_mode=settings.mode.value
+            )
+            effective_mode = settings.mode
+    else:
+        effective_mode = settings.mode
 
     # Note: GOOGLE_API_KEY is set once at application startup in src/app/main.py lifespan()
     # to avoid runtime os.environ mutation and ensure thread safety
@@ -477,14 +499,14 @@ async def run_purchase_agent(
     logger.info(
         "Starting ADK purchase agent (course-aligned)",
         event_id=event_id,
-        mode=settings.mode.value,
+        mode=effective_mode.value,
         product=product_name
     )
 
     # Send start notification
     send_notification(
         f"🤖 AI Agent Starting",
-        f"Mode: {settings.mode.value}\nProduct: {product_name}\nEvent: {event_id}"
+        f"Mode: {effective_mode.value}\nProduct: {product_name}\nEvent: {event_id}"
     )
 
     try:
@@ -517,7 +539,7 @@ async def run_purchase_agent(
 
 Product: {product_name}
 Direct Link: {direct_link}
-Mode: {settings.mode.value}
+Mode: {effective_mode.value}
 Event ID: {event_id}
 
 Instructions:
@@ -526,7 +548,7 @@ Instructions:
 3. Navigate to product using navigate_to_url with the direct_link
 4. If navigation fails, use search_for_product as fallback
 5. Add to cart and proceed to checkout
-6. Complete checkout ({"DO NOT submit - dryrun mode" if settings.mode != Mode.PROD else "SUBMIT the order - production mode"})
+6. Complete checkout ({"DO NOT submit - dryrun mode" if effective_mode != Mode.PROD else "SUBMIT the order - production mode"})
 
 Important:
 - Critical errors (2FA, 3DS, sold out) are auto-notified - just stop when you see them
@@ -547,14 +569,14 @@ Begin the purchase process now."""
 
             # Send success notification
             send_notification(
-                f"✅ Purchase {'Completed' if settings.mode == Mode.PROD else 'Simulated'}",
-                f"Product: {product_name}\nMode: {settings.mode.value}\nEvent: {event_id}\n\nAgent completed successfully"
+                f"✅ Purchase {'Completed' if effective_mode == Mode.PROD else 'Simulated'}",
+                f"Product: {product_name}\nMode: {effective_mode.value}\nEvent: {event_id}\n\nAgent completed successfully"
             )
 
             return {
                 "status": "success",
                 "event_id": event_id,
-                "mode": settings.mode.value,
+                "mode": effective_mode.value,
                 "agent_response": str(response)
             }
 
