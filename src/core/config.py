@@ -27,8 +27,8 @@ class Mode(str, Enum):
 # Webhooks can only override to SAME or SAFER modes
 MODE_SAFETY = {
     Mode.DRYRUN: 3,  # Safest - no purchase submission
-    Mode.TEST: 2,    # Medium - test purchase only
-    Mode.PROD: 1     # Least safe - real Fortaleza purchase
+    Mode.TEST: 2,    # Medium - submits order for any product
+    Mode.PROD: 1     # Least safe - real Fortaleza purchase (with safety checks)
 }
 
 

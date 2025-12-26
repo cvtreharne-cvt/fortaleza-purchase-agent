@@ -56,7 +56,7 @@ WEBHOOK_BASE_URL=http://localhost:8080
 fortaleza-in-stock project root: 
     Add MODE=dryrun to allow test emails (e.g. emails sent by non Bitters & Bottles senders) to trigger a dryrun of the agent
 
-You can test the complete pipeline with MODE=dryrun in fortaleza-in-stock, and use MODE=test when you want to validate the entire flow with a real (but cheap) purchase!
+You can test the complete pipeline with MODE=dryrun in fortaleza-in-stock, and use MODE=test when you want to validate the entire flow with a real product purchase!
 
 ## How It Works
 

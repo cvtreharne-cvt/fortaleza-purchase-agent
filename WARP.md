@@ -130,7 +130,7 @@ Navigate to homepage → Login →
 ### Operating Modes
 
 - **dryrun**: Full navigation and form filling, stops before final purchase
-- **test**: Real purchase of cheap in-stock product for end-to-end validation
+- **test**: Real purchase of an in-stock product for end-to-end validation
 - **prod**: Real Fortaleza purchase (requires `CONFIRM_PROD=YES` safety check)
 
 ## Key Technical Decisions

@@ -155,7 +155,7 @@ def test_mode_behavior_matrix():
         },
         Mode.TEST: {
             "submit_order": True,
-            "description": "Full flow, submits order (end-to-end validation with cheap product)"
+            "description": "Full flow, submits order (any product end-to-end validation - for testing or purchasing)"
         },
         Mode.PROD: {
             "submit_order": True,

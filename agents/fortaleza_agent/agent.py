@@ -76,8 +76,8 @@ ERROR HANDLING & NOTIFICATIONS:
 
 MODES:
 - dryrun: Complete all steps but DO NOT submit final order (testing selectors)
-- test: Submit real order for cheap in-stock product (end-to-end validation)
-- prod: Submit real order for Fortaleza (verify product name matches!)
+- test: Submit real order for any product (end-to-end validation)
+- prod: Submit real order for Fortaleza with safety checks (verify product name matches!)
 
 Think through each step. Observe tool results. Adapt your approach.
 """

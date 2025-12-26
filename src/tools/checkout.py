@@ -152,8 +152,8 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
     settings = get_settings()
 
     # Determine if we should submit based on mode
-    # - prod: Submit real order (Fortaleza)
-    # - test: Submit real order (cheap test product for validation)
+    # - prod: Submit real order (Fortaleza with additional safety checks)
+    # - test: Submit real order (any product - for testing or purchasing)
     # - dryrun: Do NOT submit (testing selectors only)
     if submit_order is None:
         submit_order = settings.mode in [Mode.PROD, Mode.TEST]
