@@ -9,6 +9,8 @@ from typing import Dict, Set, Tuple
 from fastapi import APIRouter, Header, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel, Field, field_validator
 
+from ..core.config import Mode, MODE_SAFETY
+
 from agents.fortaleza_agent.agent import run_purchase_agent
 from ..core.config import get_settings
 from ..core.errors import InvalidSignatureError, TimestampTooOldError, DuplicateEventError
@@ -42,18 +44,44 @@ class WebhookPayload(BaseModel):
     
     @field_validator("mode")
     @classmethod
-    def validate_mode(cls, v: str | None) -> str | None:
-        """Validate mode field against allowed values."""
+    def validate_mode(cls, v: str | None, info) -> str | None:
+        """Validate mode field and enforce safety constraints.
+        
+        Defense-in-depth: Validates at webhook layer to fail fast.
+        Additional validation occurs in agent for logging/fallback.
+        """
         if v is None:
             return v
         
         valid_modes = ["dryrun", "test", "prod"]
         normalized = v.lower()
         
+        # Validate against allowed values
         if normalized not in valid_modes:
             raise ValueError(
                 f"Invalid mode '{v}'. Must be one of: {', '.join(valid_modes)}"
             )
+        
+        # Safety validation: Only allow override to SAME or SAFER modes
+        # Get environment mode from settings
+        from ..core.config import get_settings
+        settings = get_settings()
+        
+        try:
+            requested_mode = Mode(normalized)
+            env_mode_safety = MODE_SAFETY[settings.mode]
+            requested_mode_safety = MODE_SAFETY[requested_mode]
+            
+            # Reject if trying to override to LESS safe mode
+            if requested_mode_safety < env_mode_safety:
+                raise ValueError(
+                    f"Mode override rejected: Cannot override from {settings.mode.value} "
+                    f"(safety={env_mode_safety}) to {normalized} (safety={requested_mode_safety}). "
+                    f"Only overrides to same or safer modes are allowed."
+                )
+        except KeyError:
+            # Should not happen since we validated against valid_modes, but be defensive
+            raise ValueError(f"Invalid mode configuration for '{normalized}'")
         
         return normalized
 

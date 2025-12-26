@@ -104,13 +104,14 @@ async def ensure_browser_started():
     return browser
 
 
-def create_adk_tools(product_name: str = "", event_id: str = ""):
+def create_adk_tools(product_name: str = "", event_id: str = "", effective_mode: Mode = None):
     """
     Create ADK-compatible tool definitions.
 
     Args:
         product_name: Product name for search fallback if direct link fails
         event_id: Unique event ID for this purchase attempt (used for approval flow)
+        effective_mode: Effective operating mode (after webhook override if any)
     """
     use_worker = browser_service.is_enabled()
 
@@ -302,14 +303,18 @@ def create_adk_tools(product_name: str = "", event_id: str = ""):
             }
 
     async def checkout_tool() -> dict:
-        """Complete checkout with payment. In dryrun mode, does NOT submit. In prod mode, submits real order."""
+        """Complete checkout with payment. In dryrun mode, does NOT submit. In test/prod mode, submits real order."""
         try:
+            # Use effective_mode to determine submit behavior
+            # This ensures webhook mode override is respected
+            submit_order = effective_mode in [Mode.PROD, Mode.TEST] if effective_mode else None
+            
             if use_worker:
-                result = await checkout_and_pay(None, submit_order=None, run_id=event_id)  # type: ignore[arg-type]
+                result = await checkout_and_pay(None, submit_order=submit_order, run_id=event_id)  # type: ignore[arg-type]
             else:
                 browser = await ensure_browser_started()
                 page = browser.page
-                result = await checkout_and_pay(page, submit_order=None, run_id=event_id)
+                result = await checkout_and_pay(page, submit_order=submit_order, run_id=event_id)
             return result
         except ThreeDSecureRequired as e:
             logger.error("Checkout failed (3DS required)", error=str(e), error_type=type(e).__name__)
@@ -492,6 +497,12 @@ async def run_purchase_agent(
                         environment_mode=settings.mode.value,
                         effective_mode=effective_mode.value
                     )
+                else:
+                    # Log when mode matches environment (helps debugging)
+                    logger.info(
+                        "Mode override matches environment mode",
+                        mode=settings.mode.value
+                    )
             else:
                 logger.warning(
                     "Rejecting mode override to less safe mode",
@@ -528,8 +539,9 @@ async def run_purchase_agent(
 
     try:
         async with managed_browser():
-            # Create tools with product_name for search fallback and event_id for approval
-            tools = create_adk_tools(product_name=product_name, event_id=event_id)
+            # Create tools with product_name for search fallback, event_id for approval,
+            # and effective_mode to ensure checkout respects mode override
+            tools = create_adk_tools(product_name=product_name, event_id=event_id, effective_mode=effective_mode)
 
             # Create Agent (following course pattern)
             agent = Agent(
