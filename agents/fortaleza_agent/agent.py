@@ -475,23 +475,42 @@ async def run_purchase_agent(
     settings = get_settings()
     
     # Override mode if specified in webhook payload
+    # Safety rule: Can only override to SAFER modes (dryrun is safest)
+    # Mode safety levels: DRYRUN (safest) > TEST > PROD (least safe)
     if mode_override:
         from src.core.config import Mode
+        
+        # Define mode safety levels (higher = safer)
+        MODE_SAFETY = {
+            Mode.DRYRUN: 3,  # Safest - no purchase
+            Mode.TEST: 2,    # Medium - test purchase only
+            Mode.PROD: 1     # Least safe - real purchase
+        }
+        
         try:
-            # Prevent override TO production mode for extra safety
-            if effective_mode == Mode.PROD and settings.mode \!= Mode.PROD:
+            requested_mode = Mode(mode_override.lower())
+            env_mode_safety = MODE_SAFETY[settings.mode]
+            requested_mode_safety = MODE_SAFETY[requested_mode]
+            
+            # Only allow override if requested mode is SAFER (higher safety level)
+            if requested_mode_safety >= env_mode_safety:
+                effective_mode = requested_mode
+                if requested_mode != settings.mode:
+                    logger.info(
+                        "Mode overridden to safer mode",
+                        environment_mode=settings.mode.value,
+                        effective_mode=effective_mode.value
+                    )
+                else:
+                    effective_mode = settings.mode
+            else:
                 logger.warning(
-                    "Rejecting mode override to PROD when environment is not PROD",
-                    mode_override=mode_override,
-                    environment_mode=settings.mode.value
+                    "Rejecting mode override to less safe mode",
+                    requested_mode=requested_mode.value,
+                    environment_mode=settings.mode.value,
+                    reason=f"Cannot override from {settings.mode.value} (safety={env_mode_safety}) to {requested_mode.value} (safety={requested_mode_safety})"
                 )
                 effective_mode = settings.mode
-            else:
-                logger.info(
-                    "Mode overridden by webhook payload",
-                    environment_mode=settings.mode.value,
-                    effective_mode=effective_mode.value
-                )
         except ValueError:
             logger.warning(
                 "Invalid mode override in webhook payload, using environment mode",

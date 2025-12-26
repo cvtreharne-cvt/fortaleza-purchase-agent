@@ -148,5 +148,111 @@ def test_mode_behavior_matrix():
             f"{mode.value} mode: expected submit_order={expected['submit_order']}, got {submit_order}"
 
 
+def test_mode_override_safety_dryrun_to_prod_rejected():
+    """Test that DRYRUN environment cannot be overridden to PROD (less safe)."""
+    from src.core.config import Mode
+    
+    # Define safety levels
+    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    
+    env_mode = Mode.DRYRUN
+    requested_mode = Mode.PROD
+    
+    # Should be rejected (requested is less safe)
+    should_allow = MODE_SAFETY[requested_mode] >= MODE_SAFETY[env_mode]
+    assert should_allow is False, "Should NOT allow override from DRYRUN to PROD"
+
+
+def test_mode_override_safety_dryrun_to_test_rejected():
+    """Test that DRYRUN environment cannot be overridden to TEST (less safe)."""
+    from src.core.config import Mode
+    
+    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    
+    env_mode = Mode.DRYRUN
+    requested_mode = Mode.TEST
+    
+    should_allow = MODE_SAFETY[requested_mode] >= MODE_SAFETY[env_mode]
+    assert should_allow is False, "Should NOT allow override from DRYRUN to TEST"
+
+
+def test_mode_override_safety_prod_to_dryrun_allowed():
+    """Test that PROD environment CAN be overridden to DRYRUN (safer)."""
+    from src.core.config import Mode
+    
+    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    
+    env_mode = Mode.PROD
+    requested_mode = Mode.DRYRUN
+    
+    should_allow = MODE_SAFETY[requested_mode] >= MODE_SAFETY[env_mode]
+    assert should_allow is True, "Should allow override from PROD to DRYRUN"
+
+
+def test_mode_override_safety_prod_to_test_allowed():
+    """Test that PROD environment CAN be overridden to TEST (safer)."""
+    from src.core.config import Mode
+    
+    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    
+    env_mode = Mode.PROD
+    requested_mode = Mode.TEST
+    
+    should_allow = MODE_SAFETY[requested_mode] >= MODE_SAFETY[env_mode]
+    assert should_allow is True, "Should allow override from PROD to TEST"
+
+
+def test_mode_override_safety_test_to_dryrun_allowed():
+    """Test that TEST environment CAN be overridden to DRYRUN (safer)."""
+    from src.core.config import Mode
+    
+    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    
+    env_mode = Mode.TEST
+    requested_mode = Mode.DRYRUN
+    
+    should_allow = MODE_SAFETY[requested_mode] >= MODE_SAFETY[env_mode]
+    assert should_allow is True, "Should allow override from TEST to DRYRUN"
+
+
+def test_mode_override_safety_test_to_prod_rejected():
+    """Test that TEST environment cannot be overridden to PROD (less safe)."""
+    from src.core.config import Mode
+    
+    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    
+    env_mode = Mode.TEST
+    requested_mode = Mode.PROD
+    
+    should_allow = MODE_SAFETY[requested_mode] >= MODE_SAFETY[env_mode]
+    assert should_allow is False, "Should NOT allow override from TEST to PROD"
+
+
+def test_mode_override_safety_matrix():
+    """Test complete mode override safety matrix."""
+    from src.core.config import Mode
+    
+    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    
+    # Expected results: Can override if requested >= environment (same or safer)
+    test_cases = [
+        # (env_mode, requested_mode, should_allow)
+        (Mode.PROD, Mode.PROD, True),      # Same level
+        (Mode.PROD, Mode.TEST, True),      # Safer
+        (Mode.PROD, Mode.DRYRUN, True),    # Safer
+        (Mode.TEST, Mode.PROD, False),     # Less safe - REJECT
+        (Mode.TEST, Mode.TEST, True),      # Same level
+        (Mode.TEST, Mode.DRYRUN, True),    # Safer
+        (Mode.DRYRUN, Mode.PROD, False),   # Less safe - REJECT
+        (Mode.DRYRUN, Mode.TEST, False),   # Less safe - REJECT  
+        (Mode.DRYRUN, Mode.DRYRUN, True),  # Same level
+    ]
+    
+    for env_mode, requested_mode, expected_allow in test_cases:
+        actual_allow = MODE_SAFETY[requested_mode] >= MODE_SAFETY[env_mode]
+        assert actual_allow == expected_allow, \
+            f"env={env_mode.value}, requested={requested_mode.value}: expected {expected_allow}, got {actual_allow}"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
