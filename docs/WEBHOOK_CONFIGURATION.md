@@ -41,6 +41,23 @@ WEBHOOK_BASE_URL=https://abc123.ngrok.io
 WEBHOOK_BASE_URL=http://localhost:8080
 ```
 
+| Gmail Fortaleza Monitor<br>(Mode) | Fortaleza Purchase Agent<br>(Mode) | Agent Action |
+|:---:|:---:|:---:|
+| PROD | PROD | Buy |
+| TEST | PROD | Buy |
+| DRYRUN | PROD | Do Not Buy |
+| PROD | DRYRUN | Do Not Buy |
+| TEST | DRYRUN | Do Not Buy |
+| DRYRUN | DRYRUN | Do Not Buy |
+| PROD | TEST | Buy |
+| TEST | TEST | Buy |
+| DRYRUN | TEST | Do Not Buy |
+
+fortaleza-in-stock project root: 
+    Add MODE=dryrun to allow test emails (e.g. emails sent by non Bitters & Bottles senders) to trigger a dryrun of the agent
+
+You can test the complete pipeline with MODE=dryrun in fortaleza-in-stock, and use MODE=test when you want to validate the entire flow with a real (but cheap) purchase!
+
 ## How It Works
 
 ### Approval Flow
