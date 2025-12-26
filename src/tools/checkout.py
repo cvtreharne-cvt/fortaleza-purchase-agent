@@ -139,7 +139,7 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
     Args:
         page: Playwright page (should be on checkout page)
         submit_order: If True, submits order. If None, uses mode setting
-                     (dryrun/test=False, prod=True)
+                     (dryrun=False, test/prod=True)
         run_id: Unique identifier for this agent run (required for approval)
 
     Returns:
@@ -152,8 +152,11 @@ async def checkout_and_pay(page: Page, submit_order: bool = None, run_id: str = 
     settings = get_settings()
 
     # Determine if we should submit based on mode
+    # - prod: Submit real order (Fortaleza)
+    # - test: Submit real order (cheap test product for validation)
+    # - dryrun: Do NOT submit (testing selectors only)
     if submit_order is None:
-        submit_order = settings.mode == Mode.PROD
+        submit_order = settings.mode in [Mode.PROD, Mode.TEST]
 
     logger.info("Starting checkout process", submit_order=submit_order, mode=settings.mode.value, run_id=run_id)
 

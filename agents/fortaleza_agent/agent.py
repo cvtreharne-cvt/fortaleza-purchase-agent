@@ -75,8 +75,9 @@ ERROR HANDLING & NOTIFICATIONS:
 - Other errors → Attempt recovery where possible
 
 MODES:
-- dryrun: Complete all steps but DO NOT submit final order
-- prod: Submit real order (verify product name matches!)
+- dryrun: Complete all steps but DO NOT submit final order (testing selectors)
+- test: Submit real order for cheap in-stock product (end-to-end validation)
+- prod: Submit real order for Fortaleza (verify product name matches!)
 
 Think through each step. Observe tool results. Adapt your approach.
 """
@@ -477,12 +478,20 @@ async def run_purchase_agent(
     if mode_override:
         from src.core.config import Mode
         try:
-            effective_mode = Mode(mode_override.lower())
-            logger.info(
-                "Mode overridden by webhook payload",
-                environment_mode=settings.mode.value,
-                effective_mode=effective_mode.value
-            )
+            # Prevent override TO production mode for extra safety
+            if effective_mode == Mode.PROD and settings.mode \!= Mode.PROD:
+                logger.warning(
+                    "Rejecting mode override to PROD when environment is not PROD",
+                    mode_override=mode_override,
+                    environment_mode=settings.mode.value
+                )
+                effective_mode = settings.mode
+            else:
+                logger.info(
+                    "Mode overridden by webhook payload",
+                    environment_mode=settings.mode.value,
+                    effective_mode=effective_mode.value
+                )
         except ValueError:
             logger.warning(
                 "Invalid mode override in webhook payload, using environment mode",
@@ -597,6 +606,7 @@ Begin the purchase process now."""
         return {
             "status": "error",
             "event_id": event_id,
+            "mode": effective_mode.value,
             "error": str(e)
         }
 
