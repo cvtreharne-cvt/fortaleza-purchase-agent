@@ -307,7 +307,8 @@ def create_adk_tools(product_name: str = "", event_id: str = "", effective_mode:
         try:
             # Use effective_mode to determine submit behavior
             # This ensures webhook mode override is respected
-            submit_order = effective_mode in [Mode.PROD, Mode.TEST] if effective_mode else None
+            # effective_mode is always set (line 528), so no need for fallback
+            submit_order = effective_mode in [Mode.PROD, Mode.TEST]
             
             if use_worker:
                 result = await checkout_and_pay(None, submit_order=submit_order, run_id=event_id)  # type: ignore[arg-type]

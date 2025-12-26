@@ -172,10 +172,7 @@ def test_mode_behavior_matrix():
 
 def test_mode_override_safety_dryrun_to_prod_rejected():
     """Test that DRYRUN environment cannot be overridden to PROD (less safe)."""
-    from src.core.config import Mode
-    
-    # Define safety levels
-    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    from src.core.config import Mode, MODE_SAFETY
     
     env_mode = Mode.DRYRUN
     requested_mode = Mode.PROD
@@ -187,9 +184,7 @@ def test_mode_override_safety_dryrun_to_prod_rejected():
 
 def test_mode_override_safety_dryrun_to_test_rejected():
     """Test that DRYRUN environment cannot be overridden to TEST (less safe)."""
-    from src.core.config import Mode
-    
-    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    from src.core.config import Mode, MODE_SAFETY
     
     env_mode = Mode.DRYRUN
     requested_mode = Mode.TEST
@@ -200,9 +195,7 @@ def test_mode_override_safety_dryrun_to_test_rejected():
 
 def test_mode_override_safety_prod_to_dryrun_allowed():
     """Test that PROD environment CAN be overridden to DRYRUN (safer)."""
-    from src.core.config import Mode
-    
-    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    from src.core.config import Mode, MODE_SAFETY
     
     env_mode = Mode.PROD
     requested_mode = Mode.DRYRUN
@@ -213,9 +206,7 @@ def test_mode_override_safety_prod_to_dryrun_allowed():
 
 def test_mode_override_safety_prod_to_test_allowed():
     """Test that PROD environment CAN be overridden to TEST (safer)."""
-    from src.core.config import Mode
-    
-    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    from src.core.config import Mode, MODE_SAFETY
     
     env_mode = Mode.PROD
     requested_mode = Mode.TEST
@@ -226,9 +217,7 @@ def test_mode_override_safety_prod_to_test_allowed():
 
 def test_mode_override_safety_test_to_dryrun_allowed():
     """Test that TEST environment CAN be overridden to DRYRUN (safer)."""
-    from src.core.config import Mode
-    
-    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    from src.core.config import Mode, MODE_SAFETY
     
     env_mode = Mode.TEST
     requested_mode = Mode.DRYRUN
@@ -239,9 +228,7 @@ def test_mode_override_safety_test_to_dryrun_allowed():
 
 def test_mode_override_safety_test_to_prod_rejected():
     """Test that TEST environment cannot be overridden to PROD (less safe)."""
-    from src.core.config import Mode
-    
-    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    from src.core.config import Mode, MODE_SAFETY
     
     env_mode = Mode.TEST
     requested_mode = Mode.PROD
@@ -252,9 +239,7 @@ def test_mode_override_safety_test_to_prod_rejected():
 
 def test_mode_override_safety_matrix():
     """Test complete mode override safety matrix."""
-    from src.core.config import Mode
-    
-    MODE_SAFETY = {Mode.DRYRUN: 3, Mode.TEST: 2, Mode.PROD: 1}
+    from src.core.config import Mode, MODE_SAFETY
     
     # Expected results: Can override if requested >= environment (same or safer)
     test_cases = [

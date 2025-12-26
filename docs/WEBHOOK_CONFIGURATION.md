@@ -41,6 +41,8 @@ WEBHOOK_BASE_URL=https://abc123.ngrok.io
 WEBHOOK_BASE_URL=http://localhost:8080
 ```
 
+Note: The Gmail Monitor can override the Purchase Agent's mode via webhook payload. The agent will only accept overrides to the same or safer modes.
+
 | Gmail Fortaleza Monitor<br>(Mode) | Fortaleza Purchase Agent<br>(Mode) | Agent Action |
 |:---:|:---:|:---:|
 | PROD | PROD | Buy |
