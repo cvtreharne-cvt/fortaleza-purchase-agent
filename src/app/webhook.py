@@ -44,11 +44,11 @@ class WebhookPayload(BaseModel):
     
     @field_validator("mode")
     @classmethod
-    def validate_mode(cls, v: str | None, info) -> str | None:
-        """Validate mode field and enforce safety constraints.
+    def validate_mode(cls, v: str | None) -> str | None:
+        """Validate mode field format.
         
-        Defense-in-depth: Validates at webhook layer to fail fast.
-        Additional validation occurs in agent for logging/fallback.
+        Note: Safety constraint validation (checking if override is allowed)
+        happens in the webhook handler to avoid state dependencies in validators.
         """
         if v is None:
             return v
@@ -61,27 +61,6 @@ class WebhookPayload(BaseModel):
             raise ValueError(
                 f"Invalid mode '{v}'. Must be one of: {', '.join(valid_modes)}"
             )
-        
-        # Safety validation: Only allow override to SAME or SAFER modes
-        # Get environment mode from settings
-        from ..core.config import get_settings
-        settings = get_settings()
-        
-        try:
-            requested_mode = Mode(normalized)
-            env_mode_safety = MODE_SAFETY[settings.mode]
-            requested_mode_safety = MODE_SAFETY[requested_mode]
-            
-            # Reject if trying to override to LESS safe mode
-            if requested_mode_safety < env_mode_safety:
-                raise ValueError(
-                    f"Mode override rejected: Cannot override from {settings.mode.value} "
-                    f"(safety={env_mode_safety}) to {normalized} (safety={requested_mode_safety}). "
-                    f"Only overrides to same or safer modes are allowed."
-                )
-        except KeyError:
-            # Should not happen since we validated against valid_modes, but be defensive
-            raise ValueError(f"Invalid mode configuration for '{normalized}'")
         
         return normalized
 
@@ -306,6 +285,42 @@ async def handle_webhook(
         
         # Check idempotency
         check_idempotency(payload.event_id)
+        
+        # Validate mode override safety constraints (defense-in-depth)
+        # Only allow override to SAME or SAFER modes
+        if payload.mode:
+            try:
+                requested_mode = Mode(payload.mode)
+                env_mode_safety = MODE_SAFETY[settings.mode]
+                requested_mode_safety = MODE_SAFETY[requested_mode]
+                
+                # Reject if trying to override to LESS safe mode
+                if requested_mode_safety < env_mode_safety:
+                    logger.warning(
+                        "Mode override rejected at webhook layer",
+                        requested_mode=payload.mode,
+                        environment_mode=settings.mode.value,
+                        requested_safety=requested_mode_safety,
+                        environment_safety=env_mode_safety,
+                        security_event="unsafe_mode_override",
+                        severity="WARNING"
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Mode override rejected: Cannot override from {settings.mode.value} "
+                            f"(safety={env_mode_safety}) to {payload.mode} (safety={requested_mode_safety}). "
+                            f"Only overrides to same or safer modes are allowed."
+                        )
+                    )
+            except ValueError:
+                # Invalid mode enum value (shouldn't happen due to Pydantic validation)
+                logger.error(
+                    "Invalid mode enum conversion",
+                    mode=payload.mode,
+                    event_id=payload.event_id
+                )
+                raise HTTPException(status_code=400, detail=f"Invalid mode value: {payload.mode}")
         
         logger.info(
             "Webhook received and validated",

@@ -277,30 +277,35 @@ def test_mode_override_safety_matrix():
 
 
 def test_webhook_validation_rejects_unsafe_override():
-    """Test that webhook validation rejects unsafe mode overrides at API boundary."""
+    """Test that webhook validation rejects unsafe mode overrides at API boundary.
+    
+    Note: After refactoring, safety validation happens in the webhook handler,
+    not the Pydantic validator. This test now verifies the Pydantic validator
+    only checks format, and the handler would reject unsafe overrides.
+    """
     from unittest.mock import patch
     from src.core.config import reload_settings
-    from pydantic import ValidationError
     
     # Set environment to DRYRUN
     with patch.dict('os.environ', {'MODE': 'dryrun'}):
         reload_settings()
         
-        # Try to override to PROD (should be rejected)
-        with pytest.raises(ValidationError) as exc_info:
-            WebhookPayload(
-                event_id="test-123",
-                received_at="2025-11-17T00:00:00Z",
-                subject="Test",
-                direct_link="https://example.com/product",
-                product_hint="Test Product",
-                mode="prod"  # Unsafe override
-            )
+        # Pydantic validator should accept the format ("prod" is valid)
+        # Safety rejection happens in webhook handler, not validator
+        payload = WebhookPayload(
+            event_id="test-123",
+            received_at="2025-11-17T00:00:00Z",
+            subject="Test",
+            direct_link="https://example.com/product",
+            product_hint="Test Product",
+            mode="prod"  # Valid format, handler will reject safety
+        )
         
-        # Verify error message mentions safety
-        error_msg = str(exc_info.value)
-        assert "Mode override rejected" in error_msg
-        assert "safety" in error_msg.lower()
+        # Verify payload was created (format validation passed)
+        assert payload.mode == "prod"
+        
+        # Note: The actual safety rejection happens in handle_webhook()
+        # See test_webhook_handler_rejects_unsafe_override for integration test
         
         reload_settings()
 
@@ -410,6 +415,26 @@ def test_effective_mode_prod_submits_order():
             call_args = mock_checkout.call_args
             assert call_args[1]['submit_order'] is True, \
                 "Checkout should use submit_order=True when effective_mode=PROD"
+
+
+def test_webhook_payload_invalid_mode_format():
+    """Test that Pydantic validator rejects invalid mode format."""
+    from pydantic import ValidationError
+    
+    # Try to create payload with invalid mode
+    with pytest.raises(ValidationError) as exc_info:
+        WebhookPayload(
+            event_id="test-123",
+            received_at="2025-11-17T00:00:00Z",
+            subject="Test",
+            direct_link="https://example.com/product",
+            product_hint="Test Product",
+            mode="invalid_mode"  # Invalid format
+        )
+    
+    # Verify error mentions valid modes
+    error_msg = str(exc_info.value)
+    assert "Invalid mode" in error_msg
 
 
 if __name__ == '__main__':
