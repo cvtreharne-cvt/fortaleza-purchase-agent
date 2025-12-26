@@ -144,9 +144,9 @@ For this focused use case, native Playwright provides the best balance of simpli
 - Safe for testing selectors
 
 ### `test`
-- Real purchase of cheap in-stock product
-- End-to-end validation
-- Verifies full flow
+- Real purchase of any product
+- End-to-end validation with actual order submission
+- Use for testing the full flow or purchasing any product
 
 ### `prod`
 - Real Fortaleza purchase
@@ -405,7 +405,7 @@ MODE=dryrun HEADLESS=false python -m src.app.main
 
 ### Phase 2: Local Test Purchase
 ```bash
-MODE=test PRODUCT_NAME="Cheap Test Product" python -m src.app.main
+MODE=test PRODUCT_NAME="In Stock Test Product" python -m src.app.main
 ```
 
 ### Phase 3: Cloud Run Dry Run

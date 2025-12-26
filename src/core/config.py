@@ -22,6 +22,66 @@ class Mode(str, Enum):
     PROD = "prod"
 
 
+# Mode safety levels for webhook override validation
+# Higher values = safer modes (less likely to submit real purchase)
+# Webhooks can only override to SAME or SAFER modes
+MODE_SAFETY = {
+    Mode.DRYRUN: 3,  # Safest - no purchase submission
+    Mode.TEST: 2,    # Medium - submits order for any product
+    Mode.PROD: 1     # Least safe - real Fortaleza purchase (with safety checks)
+}
+
+
+# Validate MODE_SAFETY at module load time to catch configuration errors early
+def _validate_mode_safety():
+    """Validate that MODE_SAFETY dictionary is in sync with Mode enum.
+    
+    This validation runs at module import time to catch configuration errors
+    before they cause runtime failures.
+    
+    Raises:
+        ConfigurationError: If MODE_SAFETY is missing modes or has invalid entries
+    """
+    # Check all Mode enum values are present in MODE_SAFETY
+    mode_values = set(Mode)
+    safety_keys = set(MODE_SAFETY.keys())
+    
+    missing = mode_values - safety_keys
+    if missing:
+        raise ConfigurationError(
+            f"MODE_SAFETY is missing entries for: {', '.join(m.value for m in missing)}. "
+            f"Every Mode enum value must have a safety level defined."
+        )
+    
+    extra = safety_keys - mode_values
+    if extra:
+        raise ConfigurationError(
+            f"MODE_SAFETY has unexpected entries: {', '.join(m.value for m in extra)}. "
+            f"All keys must be valid Mode enum values."
+        )
+    
+    # Validate all safety levels are positive integers
+    for mode, safety_level in MODE_SAFETY.items():
+        if not isinstance(safety_level, int) or safety_level <= 0:
+            raise ConfigurationError(
+                f"MODE_SAFETY[{mode.value}] must be a positive integer, got: {safety_level}"
+            )
+    
+    # Validate safety levels are unique (no two modes with same level)
+    safety_values = list(MODE_SAFETY.values())
+    if len(safety_values) != len(set(safety_values)):
+        duplicates = {v: [m.value for m, sv in MODE_SAFETY.items() if sv == v] 
+                     for v in safety_values if safety_values.count(v) > 1}
+        raise ConfigurationError(
+            f"MODE_SAFETY has duplicate safety levels: {duplicates}. "
+            f"Each mode must have a unique safety level."
+        )
+
+
+# Run validation at module load time
+_validate_mode_safety()
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     

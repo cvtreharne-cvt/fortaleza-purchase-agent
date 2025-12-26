@@ -16,7 +16,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeout, Error as Pla
 
 from src.core import browser_service
 from src.core.browser import managed_browser, get_browser_manager
-from src.core.config import get_settings, Mode
+from src.core.config import get_settings, Mode, MODE_SAFETY
 from src.core.errors import (
     NavigationError,
     TwoFactorRequired,
@@ -75,8 +75,9 @@ ERROR HANDLING & NOTIFICATIONS:
 - Other errors → Attempt recovery where possible
 
 MODES:
-- dryrun: Complete all steps but DO NOT submit final order
-- prod: Submit real order (verify product name matches!)
+- dryrun: Complete all steps but DO NOT submit final order (testing selectors)
+- test: Submit real order for any product (end-to-end validation)
+- prod: Submit real order for Fortaleza with safety checks (verify product name matches!)
 
 Think through each step. Observe tool results. Adapt your approach.
 """
@@ -103,13 +104,14 @@ async def ensure_browser_started():
     return browser
 
 
-def create_adk_tools(product_name: str = "", event_id: str = ""):
+def create_adk_tools(product_name: str = "", event_id: str = "", effective_mode: Mode = None):
     """
     Create ADK-compatible tool definitions.
 
     Args:
         product_name: Product name for search fallback if direct link fails
         event_id: Unique event ID for this purchase attempt (used for approval flow)
+        effective_mode: Effective operating mode (after webhook override if any)
     """
     use_worker = browser_service.is_enabled()
 
@@ -301,14 +303,19 @@ def create_adk_tools(product_name: str = "", event_id: str = ""):
             }
 
     async def checkout_tool() -> dict:
-        """Complete checkout with payment. In dryrun mode, does NOT submit. In prod mode, submits real order."""
+        """Complete checkout with payment. In dryrun mode, does NOT submit. In test/prod mode, submits real order."""
         try:
+            # Use effective_mode to determine submit behavior
+            # This ensures webhook mode override is respected
+            # effective_mode is always set (line 528), so no need for fallback
+            submit_order = effective_mode in [Mode.PROD, Mode.TEST]
+            
             if use_worker:
-                result = await checkout_and_pay(None, submit_order=None, run_id=event_id)  # type: ignore[arg-type]
+                result = await checkout_and_pay(None, submit_order=submit_order, run_id=event_id)  # type: ignore[arg-type]
             else:
                 browser = await ensure_browser_started()
                 page = browser.page
-                result = await checkout_and_pay(page, submit_order=None, run_id=event_id)
+                result = await checkout_and_pay(page, submit_order=submit_order, run_id=event_id)
             return result
         except ThreeDSecureRequired as e:
             logger.error("Checkout failed (3DS required)", error=str(e), error_type=type(e).__name__)
@@ -456,7 +463,8 @@ def log_agent_events(events: List, event_id: str, product_name: str) -> None:
 async def run_purchase_agent(
     direct_link: str,
     product_name: str,
-    event_id: str
+    event_id: str,
+    mode_override: str | None = None
 ) -> dict:
     """
     Run the ADK-powered purchase agent using course-aligned patterns.
@@ -465,11 +473,60 @@ async def run_purchase_agent(
         direct_link: Direct URL to product from email
         product_name: Product name (for search fallback)
         event_id: Unique event ID for this purchase attempt
+        mode_override: Optional mode override (dryrun, test, or prod) from webhook payload
 
     Returns:
         dict with execution result
     """
     settings = get_settings()
+    
+    # Override mode if specified in webhook payload
+    # Safety rule: Can only override to SAME or SAFER modes
+    # MODE_SAFETY defines levels (higher = safer): DRYRUN(3) > TEST(2) > PROD(1)
+    # 
+    # NOTE: This validation is INTENTIONALLY duplicated in webhook.py (lines 289-324)
+    # Defense-in-depth strategy:
+    # - Webhook layer: Fail fast at API boundary (returns HTTP 400)
+    # - Agent layer: Graceful fallback + handles direct agent invocations
+    # Both layers are necessary for comprehensive security coverage.
+    if mode_override:
+        try:
+            requested_mode = Mode(mode_override.lower())
+            env_mode_safety = MODE_SAFETY[settings.mode]
+            requested_mode_safety = MODE_SAFETY[requested_mode]
+            
+            # Only allow override if requested mode is SAFER (higher safety level)
+            if requested_mode_safety >= env_mode_safety:
+                effective_mode = requested_mode
+                if requested_mode != settings.mode:
+                    logger.info(
+                        "Mode overridden to safer mode",
+                        environment_mode=settings.mode.value,
+                        effective_mode=effective_mode.value
+                    )
+                else:
+                    # Log when mode matches environment (helps debugging)
+                    logger.info(
+                        "Mode override matches environment mode",
+                        mode=settings.mode.value
+                    )
+            else:
+                logger.warning(
+                    "Rejecting mode override to less safe mode",
+                    requested_mode=requested_mode.value,
+                    environment_mode=settings.mode.value,
+                    reason=f"Cannot override from {settings.mode.value} (safety={env_mode_safety}) to {requested_mode.value} (safety={requested_mode_safety})"
+                )
+                effective_mode = settings.mode
+        except ValueError:
+            logger.warning(
+                "Invalid mode override in webhook payload, using environment mode",
+                invalid_mode=mode_override,
+                environment_mode=settings.mode.value
+            )
+            effective_mode = settings.mode
+    else:
+        effective_mode = settings.mode
 
     # Note: GOOGLE_API_KEY is set once at application startup in src/app/main.py lifespan()
     # to avoid runtime os.environ mutation and ensure thread safety
@@ -477,20 +534,21 @@ async def run_purchase_agent(
     logger.info(
         "Starting ADK purchase agent (course-aligned)",
         event_id=event_id,
-        mode=settings.mode.value,
+        mode=effective_mode.value,
         product=product_name
     )
 
     # Send start notification
     send_notification(
         f"🤖 AI Agent Starting",
-        f"Mode: {settings.mode.value}\nProduct: {product_name}\nEvent: {event_id}"
+        f"Mode: {effective_mode.value}\nProduct: {product_name}\nEvent: {event_id}"
     )
 
     try:
         async with managed_browser():
-            # Create tools with product_name for search fallback and event_id for approval
-            tools = create_adk_tools(product_name=product_name, event_id=event_id)
+            # Create tools with product_name for search fallback, event_id for approval,
+            # and effective_mode to ensure checkout respects mode override
+            tools = create_adk_tools(product_name=product_name, event_id=event_id, effective_mode=effective_mode)
 
             # Create Agent (following course pattern)
             agent = Agent(
@@ -517,7 +575,7 @@ async def run_purchase_agent(
 
 Product: {product_name}
 Direct Link: {direct_link}
-Mode: {settings.mode.value}
+Mode: {effective_mode.value}
 Event ID: {event_id}
 
 Instructions:
@@ -526,7 +584,7 @@ Instructions:
 3. Navigate to product using navigate_to_url with the direct_link
 4. If navigation fails, use search_for_product as fallback
 5. Add to cart and proceed to checkout
-6. Complete checkout ({"DO NOT submit - dryrun mode" if settings.mode != Mode.PROD else "SUBMIT the order - production mode"})
+6. Complete checkout ({"DO NOT submit - dryrun mode" if effective_mode == Mode.DRYRUN else "SUBMIT the order - test/prod mode"})
 
 Important:
 - Critical errors (2FA, 3DS, sold out) are auto-notified - just stop when you see them
@@ -547,14 +605,14 @@ Begin the purchase process now."""
 
             # Send success notification
             send_notification(
-                f"✅ Purchase {'Completed' if settings.mode == Mode.PROD else 'Simulated'}",
-                f"Product: {product_name}\nMode: {settings.mode.value}\nEvent: {event_id}\n\nAgent completed successfully"
+                f"✅ Purchase {'Completed' if effective_mode == Mode.PROD else 'Simulated'}",
+                f"Product: {product_name}\nMode: {effective_mode.value}\nEvent: {event_id}\n\nAgent completed successfully"
             )
 
             return {
                 "status": "success",
                 "event_id": event_id,
-                "mode": settings.mode.value,
+                "mode": effective_mode.value,
                 "agent_response": str(response)
             }
 
@@ -575,6 +633,7 @@ Begin the purchase process now."""
         return {
             "status": "error",
             "event_id": event_id,
+            "mode": effective_mode.value,
             "error": str(e)
         }
 

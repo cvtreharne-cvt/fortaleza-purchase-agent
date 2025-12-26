@@ -7,7 +7,9 @@ import time
 from typing import Dict, Set, Tuple
 
 from fastapi import APIRouter, Header, HTTPException, Request, BackgroundTasks
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from ..core.config import Mode, MODE_SAFETY
 
 from agents.fortaleza_agent.agent import run_purchase_agent
 from ..core.config import get_settings
@@ -38,6 +40,29 @@ class WebhookPayload(BaseModel):
     subject: str = Field(..., description="Email subject line")
     direct_link: str = Field(..., description="Direct link to product page")
     product_hint: str = Field(..., description="Product name hint from email")
+    mode: str | None = Field(default=None, description="Optional mode override: dryrun, test, or prod")
+    
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str | None) -> str | None:
+        """Validate mode field format.
+        
+        Note: Safety constraint validation (checking if override is allowed)
+        happens in the webhook handler to avoid state dependencies in validators.
+        """
+        if v is None:
+            return v
+        
+        valid_modes = ["dryrun", "test", "prod"]
+        normalized = v.lower()
+        
+        # Validate against allowed values
+        if normalized not in valid_modes:
+            raise ValueError(
+                f"Invalid mode '{v}'. Must be one of: {', '.join(valid_modes)}"
+            )
+        
+        return normalized
 
 
 def cleanup_rate_limit_store() -> None:
@@ -261,11 +286,50 @@ async def handle_webhook(
         # Check idempotency
         check_idempotency(payload.event_id)
         
+        # Validate mode override safety constraints (defense-in-depth)
+        # NOTE: This validation is INTENTIONALLY duplicated in agent.py (lines 485-520)
+        # Defense-in-depth: Webhook layer rejects early, agent layer provides fallback
+        # Only allow override to SAME or SAFER modes
+        if payload.mode:
+            try:
+                requested_mode = Mode(payload.mode)
+                env_mode_safety = MODE_SAFETY[settings.mode]
+                requested_mode_safety = MODE_SAFETY[requested_mode]
+                
+                # Reject if trying to override to LESS safe mode
+                if requested_mode_safety < env_mode_safety:
+                    logger.warning(
+                        "Mode override rejected at webhook layer",
+                        requested_mode=payload.mode,
+                        environment_mode=settings.mode.value,
+                        requested_safety=requested_mode_safety,
+                        environment_safety=env_mode_safety,
+                        security_event="unsafe_mode_override",
+                        severity="WARNING"
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Mode override rejected: Cannot override from {settings.mode.value} "
+                            f"(safety={env_mode_safety}) to {payload.mode} (safety={requested_mode_safety}). "
+                            f"Only overrides to same or safer modes are allowed."
+                        )
+                    )
+            except ValueError:
+                # Invalid mode enum value (shouldn't happen due to Pydantic validation)
+                logger.error(
+                    "Invalid mode enum conversion",
+                    mode=payload.mode,
+                    event_id=payload.event_id
+                )
+                raise HTTPException(status_code=400, detail=f"Invalid mode value: {payload.mode}")
+        
         logger.info(
             "Webhook received and validated",
             event_id=payload.event_id,
             product_hint=payload.product_hint,
-            direct_link=payload.direct_link
+            direct_link=payload.direct_link,
+            mode_override=payload.mode
         )
 
         # Trigger agent execution in background
@@ -273,7 +337,8 @@ async def handle_webhook(
             run_purchase_agent,
             direct_link=payload.direct_link,
             product_name=payload.product_hint,
-            event_id=payload.event_id
+            event_id=payload.event_id,
+            mode_override=payload.mode
         )
 
         logger.info(
