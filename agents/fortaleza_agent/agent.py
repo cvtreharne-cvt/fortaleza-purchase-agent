@@ -16,7 +16,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeout, Error as Pla
 
 from src.core import browser_service
 from src.core.browser import managed_browser, get_browser_manager
-from src.core.config import get_settings, Mode
+from src.core.config import get_settings, Mode, MODE_SAFETY
 from src.core.errors import (
     NavigationError,
     TwoFactorRequired,
@@ -475,18 +475,9 @@ async def run_purchase_agent(
     settings = get_settings()
     
     # Override mode if specified in webhook payload
-    # Safety rule: Can only override to SAFER modes (dryrun is safest)
-    # Mode safety levels: DRYRUN (safest) > TEST > PROD (least safe)
+    # Safety rule: Can only override to SAME or SAFER modes
+    # MODE_SAFETY defines levels (higher = safer): DRYRUN(3) > TEST(2) > PROD(1)
     if mode_override:
-        from src.core.config import Mode
-        
-        # Define mode safety levels (higher = safer)
-        MODE_SAFETY = {
-            Mode.DRYRUN: 3,  # Safest - no purchase
-            Mode.TEST: 2,    # Medium - test purchase only
-            Mode.PROD: 1     # Least safe - real purchase
-        }
-        
         try:
             requested_mode = Mode(mode_override.lower())
             env_mode_safety = MODE_SAFETY[settings.mode]
@@ -501,8 +492,6 @@ async def run_purchase_agent(
                         environment_mode=settings.mode.value,
                         effective_mode=effective_mode.value
                     )
-                else:
-                    effective_mode = settings.mode
             else:
                 logger.warning(
                     "Rejecting mode override to less safe mode",
@@ -576,7 +565,7 @@ Instructions:
 3. Navigate to product using navigate_to_url with the direct_link
 4. If navigation fails, use search_for_product as fallback
 5. Add to cart and proceed to checkout
-6. Complete checkout ({"DO NOT submit - dryrun mode" if effective_mode != Mode.PROD else "SUBMIT the order - production mode"})
+6. Complete checkout ({"DO NOT submit - dryrun mode" if effective_mode == Mode.DRYRUN else "SUBMIT the order - test/prod mode"})
 
 Important:
 - Critical errors (2FA, 3DS, sold out) are auto-notified - just stop when you see them

@@ -22,6 +22,16 @@ class Mode(str, Enum):
     PROD = "prod"
 
 
+# Mode safety levels for webhook override validation
+# Higher values = safer modes (less likely to submit real purchase)
+# Webhooks can only override to SAME or SAFER modes
+MODE_SAFETY = {
+    Mode.DRYRUN: 3,  # Safest - no purchase submission
+    Mode.TEST: 2,    # Medium - test purchase only
+    Mode.PROD: 1     # Least safe - real Fortaleza purchase
+}
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     

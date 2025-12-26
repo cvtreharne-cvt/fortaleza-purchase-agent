@@ -7,7 +7,7 @@ import time
 from typing import Dict, Set, Tuple
 
 from fastapi import APIRouter, Header, HTTPException, Request, BackgroundTasks
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from agents.fortaleza_agent.agent import run_purchase_agent
 from ..core.config import get_settings
@@ -39,6 +39,23 @@ class WebhookPayload(BaseModel):
     direct_link: str = Field(..., description="Direct link to product page")
     product_hint: str = Field(..., description="Product name hint from email")
     mode: str | None = Field(default=None, description="Optional mode override: dryrun, test, or prod")
+    
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: str | None) -> str | None:
+        """Validate mode field against allowed values."""
+        if v is None:
+            return v
+        
+        valid_modes = ["dryrun", "test", "prod"]
+        normalized = v.lower()
+        
+        if normalized not in valid_modes:
+            raise ValueError(
+                f"Invalid mode '{v}'. Must be one of: {', '.join(valid_modes)}"
+            )
+        
+        return normalized
 
 
 def cleanup_rate_limit_store() -> None:
