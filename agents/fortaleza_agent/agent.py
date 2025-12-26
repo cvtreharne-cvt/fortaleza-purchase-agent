@@ -482,6 +482,12 @@ async def run_purchase_agent(
     # Override mode if specified in webhook payload
     # Safety rule: Can only override to SAME or SAFER modes
     # MODE_SAFETY defines levels (higher = safer): DRYRUN(3) > TEST(2) > PROD(1)
+    # 
+    # NOTE: This validation is INTENTIONALLY duplicated in webhook.py (lines 289-324)
+    # Defense-in-depth strategy:
+    # - Webhook layer: Fail fast at API boundary (returns HTTP 400)
+    # - Agent layer: Graceful fallback + handles direct agent invocations
+    # Both layers are necessary for comprehensive security coverage.
     if mode_override:
         try:
             requested_mode = Mode(mode_override.lower())

@@ -287,6 +287,8 @@ async def handle_webhook(
         check_idempotency(payload.event_id)
         
         # Validate mode override safety constraints (defense-in-depth)
+        # NOTE: This validation is INTENTIONALLY duplicated in agent.py (lines 485-520)
+        # Defense-in-depth: Webhook layer rejects early, agent layer provides fallback
         # Only allow override to SAME or SAFER modes
         if payload.mode:
             try:
