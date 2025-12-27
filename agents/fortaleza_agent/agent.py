@@ -406,7 +406,7 @@ def log_agent_events(events: List, event_id: str, product_name: str) -> None:
         }
 
         # Extract content parts (agent messages, tool calls, responses)
-        if hasattr(event, 'content') and event.content:
+        if hasattr(event, 'content') and event.content and event.content.parts:
             for part in event.content.parts:
                 if hasattr(part, 'text') and part.text:
                     # Agent reasoning/message
