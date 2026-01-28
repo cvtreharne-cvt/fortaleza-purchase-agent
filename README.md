@@ -35,6 +35,8 @@ An AI agent that automatically purchases products from Bitters & Bottles Spirit 
    - Success/failure alerts
    - Human approval requests (interactive)
 
+![Architecture Diagram](./FA_system_diagram.svg)
+
 ### Agent Tools
 
 - `navigate_to_product`: Navigates to product using direct link (with fallback to search)
@@ -119,10 +121,35 @@ For this focused use case, native Playwright provides the best balance of simpli
 
 ## Security Architecture
 
-### Webhook Security
+### Webhook Security (Pi → Cloud Run)
 - HMAC-SHA256 signed requests
 - Timestamp validation (5-minute window)
 - Constant-time signature comparison
+- Event ID deduplication prevents replay attacks
+
+### Browser Worker Authentication (Cloud Run → Pi)
+The browser worker runs on the Raspberry Pi and is exposed via Cloudflare tunnel at bnb-worker.treharne.com. Access is protected by:
+
+- **Bearer Token Authentication**: All requests require `Authorization: Bearer <token>` header
+- **Token Strength Validation**: Minimum 32 characters enforced at startup
+- **Production Requirement**: Server refuses to start in production without valid token
+- **Rate Limiting**: 5 requests per 15 minutes per IP address
+- **Health Check Exception**: `/health` endpoint is public for monitoring
+
+**Security Model**:
+- Token stored in GCP Secret Manager as `browser_worker_auth_token`
+- Same token set as `WORKER_AUTH_TOKEN` environment variable on Pi
+- Without valid token, all browser automation endpoints return 401 Unauthorized
+- Even if the public URL is discovered, no operations can be performed without the token
+
+**Token Distribution**:
+```python
+# Cloud Run retrieves from Secret Manager
+token = SecretManager.get_secret("browser_worker_auth_token")
+
+# Sends as Bearer token
+headers = {"Authorization": f"Bearer {token}"}
+```
 
 ### Credential Management
 - All secrets in GCP Secret Manager
