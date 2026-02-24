@@ -74,23 +74,25 @@ If direct_link fails (protocol error, 404, wrong page):
 - Human approval required before purchase submission (interactive Pushover notification)
 - Search is fallback only for link errors
 
-## Why Native Playwright (Not MCP)?
+## Why Not a Playwright MCP Server (or a Custom MCP Server)?
 
-**Native Playwright Approach:**
-- ✅ Simpler deployment (single container)
-- ✅ Lower latency (no network overhead)
-- ✅ Better debugging (local headed mode)
-- ✅ Full Playwright API control
-- ✅ Easier state management
-- ✅ Lower cost (one service)
+This project started with a native Playwright-first approach, but the production architecture evolved into a **distributed system**:
+- Cloud Run hosts the ADK orchestrator
+- A separate Node.js Playwright worker runs on the Raspberry Pi
+- The agent calls the worker over HTTPS via Cloudflare tunnel
 
-**MCP would add:**
-- ❌ Extra complexity (separate server)
-- ❌ Network latency between agent and browser
-- ❌ Additional infrastructure to manage
-- ❌ More failure points
+The current production architecture does include network overhead: the ADK orchestrator on Cloud Run calls the browser worker on the Raspberry Pi over HTTPS via Cloudflare tunnel.
 
-For this focused use case, native Playwright provides the best balance of simplicity and capability.
+### Why avoid MCP here?
+
+For this use case, MCP (Model Context Protocol — a standard for connecting AI models to external tools), whether Playwright's MCP server or a custom implementation, would still have introduced another abstraction/protocol layer on top of an already-working remote worker architecture.
+
+What mattered most was:
+- Avoiding bot detection (by running browser automation from the Pi/residential IP)
+- Keeping orchestration logic simple in the ADK agent
+- Preserving direct control over browser action APIs and error mapping
+
+Given the narrow scope (single purchase workflow), adding MCP would likely have increased complexity and operational surface area more than it improved capability.
 
 ## Why Separate Browser Worker?
 
