@@ -81,11 +81,11 @@ This project started with a native Playwright-first approach, but the production
 - A separate Node.js Playwright worker runs on the Raspberry Pi
 - The agent calls the worker over HTTPS via Cloudflare tunnel
 
-So yes — in the current design there **is** network overhead between the agent and browser execution.
+The current production architecture does include network overhead: the ADK orchestrator on Cloud Run calls the browser worker on the Raspberry Pi over HTTPS via Cloudflare tunnel.
 
 ### Why avoid MCP here?
 
-For this use case, MCP (whether Playwright's MCP server or a custom MCP server) would still have introduced another abstraction/protocol layer on top of an already-working remote worker architecture.
+For this use case, MCP (Model Context Protocol — a standard for connecting AI models to external tools), whether Playwright's MCP server or a custom implementation, would still have introduced another abstraction/protocol layer on top of an already-working remote worker architecture.
 
 What mattered most was:
 - Avoiding bot detection (by running browser automation from the Pi/residential IP)
