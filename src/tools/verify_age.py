@@ -38,7 +38,8 @@ async def verify_age(page: Page) -> dict:
         # Check if age verification overlay is present
         # Common selectors for age verification modals
         overlay_selectors = [
-            ".m-a-v-overlay",  # BittersAndBottles specific
+            ".age-verification",  # BittersAndBottles specific
+            ".m-a-v-overlay",
             ".age-verification-overlay",
             ".age-gate",
             "[data-age-verification]",
@@ -66,6 +67,8 @@ async def verify_age(page: Page) -> dict:
         
         # First try the common simple confirmation buttons
         simple_button_selectors = [
+            "button.age-verification__popup-close",  # BittersAndBottles specific
+            "button:has-text('Yes I am')",
             "button:has-text('Over 21')",
             "button:has-text('OVER 21')",
             "button:has-text('Yes')",
